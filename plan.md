@@ -1,160 +1,289 @@
-# 视频项目开发任务计划表
+# 同学A — 视频识别与大模型辅助判断 实施计划
 
-> **来源文档**：`video_tasks.md`（同学A 视频识别与大模型辅助判断核心任务说明书）
-> **生成日期**：2026-07-14
-> **角色定位**：同学A — 视频感知、人体姿态关键点提取、专项行为统计及多模态大模型（MLLM）辅助复核
-
----
-
-## 一、项目总体信息
-
-| 项目维度 | 详情 |
-| :--- | :--- |
-| **核心目标** | 将居家摄像头视频流转换为结构化客观行为特征，利用 Qwen2.5-VL-7B 进行场景语义复核 |
-| **运行平台** | AutoDL 算力云（RTX 4090 / 24GB VRAM） |
-| **无卡模式** | 常态运行于 CPU 模式，仅密集跑批时启用 GPU |
-| **基础镜像** | Ubuntu 22.04 / Python 3.10 / PyTorch 2.1.2 / CUDA 11.8 |
-| **基准数据集** | Toyota Smarthome (trimmed RGB + skeleton_v1.2 + untrimmed annotations) |
-| **核心技术栈** | YOLOv8-Pose, ByteTrack/DeepSORT, Qwen2.5-VL-7B-Instruct |
+> 基于 `video_tasks.md` v1.0，制定可执行的工程落地计划。
+> 所有编码、测试、架构设计均严格遵循文档中的「工程化原则」和「数据接口规范」。
 
 ---
 
-## 二、任务计划总表
+## 一、项目当前状态
 
-### 阶段一：数据集接入与基础骨骼 Tracking 管线（第 1-2 天）
-
-| 任务编号 | 任务名称 | 描述 | 技术要点 | 产出标准 |
-| :--- | :--- | :--- | :--- | :--- |
-| **1.1** | Toyota Smarthome DataLoader 开发 | 编写适配 `Toyota Smarthome V1.2` 骨骼数据的 DataLoader | 读取标准骨骼坐标数据，支持滑动窗口采样 | 稳定解析本地 Skeleton 资产，输出标准骨骼坐标 |
-| **1.2** | 摄像头视频流接入模块 | 实现 RTSP 视频流接入或本地视频文件读取 | 支持实时流和离线文件两种模式 | 视频帧可逐帧输入特征提取管线 |
-| **1.3** | `VideoFeatureExtractor` 基类开发 | 编写视频特征提取基类，支持两种输入模式：YOLOv8-Pose 实时提取 OR 直接读取 Skeleton 文件 | YOLOv8-Pose 推理 + ByteTrack 多目标跟踪 + 时序滑窗 | 输出包含 A1 级 6 项基础指标的时序字典 |
-| **1.4** | 基础行为特征统计（A1 指标） | 实现 6 项基础指标的日级/小时级聚合 | 活动分钟数、久坐比例、房间切换次数、运动速度、夜间活动统计、多人共现时长 | 各项指标计算准确，通过单元测试 |
-| **1.5** | 时序滑动窗口组件 | 设计高性能时序滑动窗口，每隔固定周期计算特征 | collections.deque 限制窗口最大长度，CPU 友好 | 滑窗计算耗时 < 1.5ms |
-| **1.6** | 单元测试编写 | 使用 Skeleton V1.2 数据编写测试用例，验证特征提取正确性 | Mock GPU 依赖，支持纯 CPU 环境测试 | 全链路测试通过 |
-
-### 阶段二：专项行为判定逻辑与多视角融合（第 3-4 天）
-
-| 任务编号 | 任务名称 | 描述 | 技术要点 | 产出标准 |
-| :--- | :--- | :--- | :--- | :--- |
-| **2.1** | 重复路线/无目的徘徊检测 | 对运动轨迹空间建图，计算路径重复率和重合度 | 时序路径匹配算法，空间网格映射 | 精准检出异常往复轨迹 |
-| **2.2** | 重复开关/反复寻找行为检测 | 统计针对特定空间或物品的反复动作频次 | 高频动作计数，区域 ROI 定义 | 开关门、翻找物品等行为可计数 |
-| **2.3** | 长时间静止与异常久坐/久卧检测 | 判定人体静卧或沙发区域超阈值停留 | 骨骼关键点微弱变化检测，区域判定 | 触发警示准确 |
-| **2.4** | 昼夜节律偏移分析 | 对比个体化行为基线，统计作息时间偏离 | 基线建模、时间偏移计算 | 输出偏离分钟数 |
-| **2.5** | 社交互动强度检测 | 多人共现时计算空间距离、朝向角度、肢体交互频次 | 多人姿态分析、几何关系计算 | 量化社交强度指标 |
-| **2.6** | `SpecialBehaviorDetector` 模块集成 | 汇总 A2 全部专项算法，统一输出接口 | 长周期 Untrimmed Annotation 验证 | 通过基准数据集测试，带质量得分和时间窗 |
-| **2.7** | 多摄像头多视角融合 | 设计接口接收相邻视角摄像头画面，时空交叉几何对齐 | 置信度加权融合 | 遮挡场景下关键点不丢失 |
-
-### 阶段三：集成 Qwen2.5-VL-7B 驱动引擎（第 5 天）
-
-| 任务编号 | 任务名称 | 描述 | 技术要点 | 产出标准 |
-| :--- | :--- | :--- | :--- | :--- |
-| **3.1** | Qwen2.5-VL-7B 本地推理管线配置 | 配置 vLLM 或 Transformers 推理环境 | 模型加载、显存优化（适配 24GB VRAM） | 推理服务正常启动 |
-| **3.2** | 视频分帧采样函数 | 设计均匀采样算法，将 10-30s 视频采样为 8-24 帧 | 兼容 Toyota Smarthome Trimmed RGB 资产 | 帧序列可输入模型 |
-| **3.3** | `MLLMVerifier` 辅助判断类开发 | 编写 Qwen2.5-VL 调用封装类 | PyTorch + Transformers，异常捕获 | 稳定调用大模型 |
-| **3.4** | System Prompt 与 Few-Shot 设计 | 编写严格的 System Prompt，封闭标签 + JSON Schema 约束 | 利用 Trimmed RGB Data 典型片段设计 Few-Shot | 模型百分百返回纯净合法 JSON |
-| **3.5** | 三大语义复核任务实现 | 实现：积极认知 vs 消极退缩、正常互动 vs 诈骗风险、正常行走 vs 焦虑徘徊 | Closed-set labels，JSON Schema 强制输出 | 三类场景均可准确区分 |
-
-### 阶段四：一致性校验、异常阻断与联调测试（第 6-7 天）
-
-| 任务编号 | 任务名称 | 描述 | 技术要点 | 产出标准 |
-| :--- | :--- | :--- | :--- | :--- |
-| **4.1** | 多模型交叉校验逻辑（A4） | 实现 CV 模型 + MLLM 双重一致性确认逻辑 | 规则引擎：一致→提升置信度，冲突→拒判 | 交叉校验逻辑正确 |
-| **4.2** | 拒判机制（Refusal Mechanism） | 实现冲突/遮挡/光照不足等场景下的 `status: "uncertain"` 输出 | 多条件判断，延迟复核队列 | 不确定场景正确拒判 |
-| **4.3** | 全链路闭环测试 | 编写 10+ 视频测试日志包 | 覆盖正常/异常/边界场景 | 完整跑通检测→触发→复核→确认/拒判→JSON 输出 |
-| **4.4** | 接口对接（跨模块） | 与同学B（语音情绪）和同学C（问卷）模块进行数据接口联调 | JSON Schema 对齐，特征向量导出 | 三模块数据流打通 |
-| **4.5** | 赋能三大场景功能验证 | 验证防跌倒、心理健康、反诈骗场景的数据输出正确性 | 骨骼时序流、行为特征向量、入户人脸比对 | 三大场景功能可用 |
+| 项目 | 状态 |
+|:---|:---|
+| 源代码 (`src/video_analysis/`) | 已清空，需从头搭建 |
+| 测试 (`tests/`) | 已清空，需从头编写 |
+| README | 空白，待填充 |
+| 操作日志 | 空白，待启用 |
+| 数据集 (`/dataset/`) | 尚未挂载到当前实例 |
 
 ---
 
-## 三、跨场景赋能子任务
+## 二、工程目录结构设计
 
-| 赋能场景 | 子任务 | 技术对接要点 |
-| :--- | :--- | :--- |
-| **防跌倒模块** | 骨骼时序流实时输送（15-30fps） | 2D 骨骼关键点坐标、倾斜角、加速度 → LSTM/DGNN |
-| **防跌倒模块** | 环境动态异动检测 | 水杯打翻、液体泼洒、杂物坠落 → 通知大模型判断绊倒隐患 |
-| **防跌倒模块** | 多摄像头遮挡切换 | 相邻视角时空交叉对齐、置信度加权融合 |
-| **心理健康模块** | 长周期行为特征向量导出 | 日级/周级活动量、节律偏移、社交时长 → Transformer 融合网络 |
-| **心理健康模块** | 多模态编码融合接口 | 视频特征 + 语音情绪特征 + 问卷心理画像向量对齐 |
-| **反诈骗模块** | 入户人脸多帧聚合比对 | 最大置信度 + 时序一致性判定来访身份 |
-| **反诈骗模块** | 室内涉诈交互动作与敏感物品检测 | 检测银行卡、身份证、合同、保健品、POS 机等 + 高危交互模式识别 |
-
----
-
-## 四、核心数据接口清单
-
-| 接口名称 | 用途 | 关键字段 |
-| :--- | :--- | :--- |
-| **视频结构化行为特征输出** | 日级/周期级行为统计 | `basic_features` (6项) + `special_behaviors` (4项) + `monitoring_quality` |
-| **Qwen2.5-VL 事件复核输出** | 大模型语义判定结果 | `scene_type` + `observed_evidence` + `model_confidence` + `uncertain_factors` |
-
----
-
-## 五、任务状态图例
-
-| 状态 | 标记 | 含义 |
-| :--- | :--- | :--- |
-| ⬜ 待开始 | `[ ]` | 尚未进入开发 |
-| 🟡 进行中 | `[~]` | 正在开发中 |
-| 🟢 已完成 | `[x]` | 已完成并通过验证 |
-| 🔴 阻塞 | `[!]` | 因依赖或其他原因阻塞 |
-
----
-
-## 六、任务进度追踪
-
-### 阶段一：数据集接入与基础骨骼 Tracking 管线（第 1-2 天）
-
-| 编号 | 状态 | 任务 | 完成日期 | 备注 |
-| :--- | :--- | :--- | :--- | :--- |
-| 1.1 | 🟢 `[x]` | Toyota Smarthome DataLoader 开发 | 2026-07-14 | 支持 zip/目录两种模式，16115 条序列可正常解析 |
-| 1.2 | 🟢 `[x]` | 摄像头视频流接入模块 | 2026-07-14 | 支持 RTSP/本地文件/Mock 三种模式，create_reader 工厂自动识别 |
-| 1.3 | 🟢 `[x]` | VideoFeatureExtractor 基类开发 | 2026-07-14 | SkeletonFeatureExtractor 纯CPU可用，YOLOPose stub+mock；真实数据 123 窗口产出 |
-| 1.4 | 🟢 `[x]` | 基础行为特征统计（A1 指标） | 2026-07-14 | FeatureAggregator 流式聚合+加权平均，输出匹配 JSON Schema |
-| 1.5 | 🟢 `[x]` | 时序滑动窗口组件 | 2026-07-14 | deque 实现，push 0.55µs，advance 2.74µs |
-| 1.6 | 🟢 `[x]` | 单元测试编写 | 2026-07-14 | 全链路 21 tests + conftest fixtures；全量 140/140 通过 |
-
-### 阶段二：专项行为判定逻辑与多视角融合（第 3-4 天）
-
-| 编号 | 状态 | 任务 | 完成日期 | 备注 |
-| :--- | :--- | :--- | :--- | :--- |
-| 2.1 | ⬜ `[ ]` | 重复路线/无目的徘徊检测 | - | - |
-| 2.2 | ⬜ `[ ]` | 重复开关/反复寻找行为检测 | - | - |
-| 2.3 | ⬜ `[ ]` | 长时间静止与异常久坐/久卧检测 | - | - |
-| 2.4 | ⬜ `[ ]` | 昼夜节律偏移分析 | - | - |
-| 2.5 | ⬜ `[ ]` | 社交互动强度检测 | - | - |
-| 2.6 | ⬜ `[ ]` | SpecialBehaviorDetector 模块集成 | - | - |
-| 2.7 | ⬜ `[ ]` | 多摄像头多视角融合 | - | - |
-
-### 阶段三：集成 Qwen2.5-VL-7B 驱动引擎（第 5 天）
-
-| 编号 | 状态 | 任务 | 完成日期 | 备注 |
-| :--- | :--- | :--- | :--- | :--- |
-| 3.1 | ⬜ `[ ]` | Qwen2.5-VL-7B 本地推理管线配置 | - | - |
-| 3.2 | ⬜ `[ ]` | 视频分帧采样函数 | - | - |
-| 3.3 | ⬜ `[ ]` | MLLMVerifier 辅助判断类开发 | - | - |
-| 3.4 | ⬜ `[ ]` | System Prompt 与 Few-Shot 设计 | - | - |
-| 3.5 | ⬜ `[ ]` | 三大语义复核任务实现 | - | - |
-
-### 阶段四：一致性校验、异常阻断与联调测试（第 6-7 天）
-
-| 编号 | 状态 | 任务 | 完成日期 | 备注 |
-| :--- | :--- | :--- | :--- | :--- |
-| 4.1 | ⬜ `[ ]` | 多模型交叉校验逻辑（A4） | - | - |
-| 4.2 | ⬜ `[ ]` | 拒判机制（Refusal Mechanism） | - | - |
-| 4.3 | ⬜ `[ ]` | 全链路闭环测试 | - | - |
-| 4.4 | ⬜ `[ ]` | 接口对接（跨模块） | - | - |
-| 4.5 | ⬜ `[ ]` | 赋能三大场景功能验证 | - | - |
+```
+psychology_video_project/
+├── README.md                          # 项目入口文档
+├── video_tasks.md                     # 核心任务指令书（只读参考）
+├── plan.md                            # 本文件 — 实施计划
+├── claude_operation_log.md            # 自动化操作审计日志
+├── .gitignore
+│
+├── src/
+│   ├── __init__.py
+│   ├── video_analysis/
+│   │   ├── __init__.py
+│   │   ├── config.py                  # 全局配置（路径、阈值、时间窗参数）
+│   │   ├── data_loader.py             # 双模式数据加载器（RGB视频 / Skeleton JSON）
+│   │   ├── video_stream.py            # 视频流抽象层（文件/摄像头/RTSP）
+│   │   ├── feature_extractor.py       # A1: VideoFeatureExtractor 基类 + 滑动窗口
+│   │   ├── tracker.py                 # ByteTrack 多目标跟踪封装
+│   │   ├── pose_estimator.py          # YOLOv8-Pose 推理封装（GPU/Mock 双模式）
+│   │   ├── sliding_window.py          # 通用滑动窗口数据结构
+│   │   ├── aggregator.py              # A1: 日级/周期级指标聚合器
+│   │   ├── special_behavior.py        # A2: SpecialBehaviorDetector（徘徊/重复/久坐/节律/社交）
+│   │   ├── mllm_verifier.py           # A3: MLLMVerifier — Qwen2.5-VL 事件复核引擎
+│   │   ├── cross_validator.py         # A4: 多模型一致性校验与拒判机制
+│   │   └── pipeline.py                # 顶层 Pipeline 编排器
+│   │
+│   └── utils/
+│       ├── __init__.py
+│       ├── schema_validator.py         # JSON Schema 校验工具
+│       ├── frame_sampler.py            # 视频帧均匀采样器（给 MLLM 用）
+│       └── skeleton_parser.py          # Toyota Smarthome Skeleton V1.2 解析器
+│
+├── tests/
+│   ├── __init__.py
+│   ├── conftest.py                     # Pytest fixtures（Mock 模型、模拟数据）
+│   ├── test_data_loader.py
+│   ├── test_video_stream.py
+│   ├── test_feature_extractor.py
+│   ├── test_tracker.py
+│   ├── test_sliding_window.py
+│   ├── test_aggregator.py
+│   ├── test_special_behavior.py
+│   ├── test_mllm_verifier.py
+│   ├── test_cross_validator.py
+│   ├── test_pipeline.py
+│   └── test_schema_validator.py
+│
+└── configs/
+    ├── default.yaml                    # 默认配置
+    └── mllm_prompts.yaml              # Qwen2.5-VL System Prompt 模板
+```
 
 ---
 
-## 七、环境与约束备忘
+## 三、任务分解与排期（7 天）
 
-- ⚠️ **无卡模式常态运行**：所有核心业务逻辑必须支持纯 CPU 环境运行，GPU 推理部分必须有 mock 机制或自动跳过
-- ⚠️ **显存上限**：RTX 4090 24GB，需为 YOLOv8-Pose + Qwen2.5-VL-7B 预留合理显存预算
-- ⚠️ **数据盘空间**：50GB SSD，需管理数据集和模型权重存储
-- ⚠️ **操作日志**：每次 Claude Code 操作后需追加记录到 `claude_operation_log.md`
-- ⚠️ **README 同步**：每完成一个阶段需同步更新 README.md 中的架构描述和接口说明
+### 第 1–2 天：任务 A1 — 视频感知基座与数据加载架构
+
+**目标**：构建 `VideoStream → YOLOv8-Pose → ByteTrack → 关键点平滑 → 滑动窗口特征计算` 的实时 Pipeline。
+
+| # | 子任务 | 产出 | 验收标准 |
+|:--|:---|:---|:---|
+| A1.1 | `config.py` + `default.yaml` | 全局配置（模型路径、阈值、窗口参数） | 所有模块可通过 `config` 统一获取参数 |
+| A1.2 | `skeleton_parser.py` | Toyota Smarthome Skeleton V1.2 格式解析器 | 能正确解析骨骼 JSON，输出标准化的 `(T, K, 3)` 关键点张量 |
+| A1.3 | `data_loader.py` | 双模式 DataLoader（RGB视频 / Skeleton JSON） | 生产模式读视频 → 帧迭代器；测试模式读骨骼 → 关键点迭代器 |
+| A1.4 | `video_stream.py` | 视频流抽象层（文件/摄像头/RTSP） | 统一 `read()` 接口，支持 `cv2.VideoCapture` 封装 |
+| A1.5 | `pose_estimator.py` | YOLOv8-Pose 推理封装 | GPU 模式正常推理；CPU 模式优雅降级（返回 Mock 数据或跳过） |
+| A1.6 | `tracker.py` | ByteTrack 多目标跟踪封装 | 输入检测框+关键点 → 输出带 track_id 的目标序列 |
+| A1.7 | `sliding_window.py` | 通用滑动窗口数据结构 | O(1) 插入/淘汰，支持固定时间窗长度，线程安全 |
+| A1.8 | `feature_extractor.py` | `VideoFeatureExtractor` — 6 项基础指标计算 | 正确输出 activity_minutes / sedentary_ratio / room_transitions / movement_velocity / night_activity_stats / multi_person_duration |
+| A1.9 | `aggregator.py` | 日级/周期级聚合器 | 输出严格符合 §6.1 `daily_metrics` JSON Schema |
+| A1.10 | 单元测试 | 覆盖 A1 所有模块（CPU 模式，Mock GPU） | `pytest tests/` 全绿，测试覆盖率 ≥ 85% |
+
+**工程化要求**：
+- 所有核心特征计算逻辑（滑动窗口、指标聚合）**纯 CPU 运行**，无需 GPU
+- `pose_estimator.py` 在无 GPU 时自动降级，不抛出异常
+- 双输入模式通过 `data_loader.py` 的策略模式切换
 
 ---
 
-> **下次更新时**：请将对应任务的状态标记从 `⬜ [ ]` 更新为 `🟡 [~]`（进行中）或 `🟢 [x]`（已完成），并填写完成日期和备注。
+### 第 3–4 天：任务 A2 — 专项高危与异常行为统计模块
+
+**目标**：实现 5 项专项行为判定算法，利用 Untrimmed Annotation 验证长周期检出率。
+
+| # | 子任务 | 产出 | 验收标准 |
+|:--|:---|:---|:---|
+| A2.1 | 轨迹空间建图算法 | 基于网格/栅格的运动轨迹记录器 | 支持自定义网格分辨率，O(1) 位置查询 |
+| A2.2 | 徘徊检测 `RepetitivePathDetector` | 重复路线/无目的徘徊判定 | 输出 `repetitive_path_count`，通过 Untrimmed Annotation 验证 |
+| A2.3 | 重复动作检测 `RepeatedActionDetector` | 反复开关/翻找行为统计 | 基于特定区域（门、抽屉）的动作频次统计 |
+| A2.4 | 久坐/久卧检测 `ProlongedInactivityDetector` | 长时间静止异常检测 | 超过预设阈值（如 2h）触发标记，附带 effective_duration |
+| A2.5 | 昼夜节律偏移 `CircadianRhythmAnalyzer` | 起床/入睡/午休时间偏移分析 | 对比个体基线，输出偏移量（小时） |
+| A2.6 | 社交互动强度 `SocialInteractionAnalyzer` | 多人共现时的空间距离/朝向/肢体交互量化 | 输出 social_interaction_minutes 和 interaction_intensity |
+| A2.7 | `special_behavior.py` 总装 | `SpecialBehaviorDetector` 统一入口 | 所有子检测器可插拔，输出带 time_window / valid_duration / confidence_score |
+| A2.8 | 单元测试 | 覆盖所有检测器 + Untrimmed Annotation 模拟数据 | `pytest tests/test_special_behavior.py` 全绿 |
+
+**工程化要求**：
+- 所有检测算法**纯 CPU 运行**（几何/统计算法，不依赖深度学习）
+- 每个检测器输出必须包含 `time_window`、`valid_duration`、`confidence_score` 三要素
+- 与 A1 基础指标模块完全解耦，通过接口通信
+
+---
+
+### 第 5 天：任务 A3 — Qwen2.5-VL-7B 事件驱动复核引擎
+
+**目标**：事件触发后截取 10–30s 关键片段或 8–24 帧，送入 Qwen2.5-VL 进行语义复核。
+
+| # | 子任务 | 产出 | 验收标准 |
+|:--|:---|:---|:---|
+| A3.1 | `frame_sampler.py` | 视频均匀帧采样器 | 支持固定帧数（8/16/24）均匀采样，兼容 Trimmed RGB 短视频 |
+| A3.2 | `mllm_prompts.yaml` | System Prompt 模板（含 Few-Shot 示例） | 封闭标签、JSON Schema 强制输出、禁止 Markdown 包装 |
+| A3.3 | `mllm_verifier.py` | `MLLMVerifier` 类 | 加载 Qwen2.5-VL-7B，执行推理，返回严格符合 §6.2 Schema 的 JSON |
+| A3.4 | JSON 异常兜底 | 非标准 JSON 解析失败时的重试/降级逻辑 | 最多重试 2 次，失败后返回 `{"evidence_sufficient": false, ...}` |
+| A3.5 | `schema_validator.py` | 通用 JSON Schema 校验器 | 对 MLLM 输出做最终格式校验，确保字段完整 |
+| A3.6 | 单元测试（Mock MLLM） | 用模拟 JSON 响应覆盖三种 event_type 分支 | `pytest tests/test_mllm_verifier.py` 全绿 |
+
+**工程化要求**：
+- Qwen2.5-VL 加载/推理**必须先获取 GPU 审批**，默认使用 Mock 模式跑测试
+- Prompt 必须采用封闭标签（`enum` 约束），禁止大模型自由发挥
+- 输出 JSON 必须通过 `json.loads()` 校验，且所有 `required` 字段齐全
+
+---
+
+### 第 6–7 天：任务 A4 — 一致性校验与拒判闭环集成
+
+**目标**：构建 CV 模型与 MLLM 的交叉校验逻辑，实现完整闭环。
+
+| # | 子任务 | 产出 | 验收标准 |
+|:--|:---|:---|:---|
+| A4.1 | `cross_validator.py` | `CrossValidator` 双重一致性确认 | CV 结果 + MLLM 结果 → 一致则提升置信度，冲突则降级 |
+| A4.2 | 拒判机制 | 基于 `evidence_sufficient` 的真值过滤 | 光线不足/遮挡/证据不足 → `status: "uncertain"`，不触发强报警 |
+| A4.3 | `pipeline.py` 顶层编排 | 完整 Pipeline：视频输入 → A1特征 → A2异常检测 → A3复核 → A4校验 → 最终输出 | 端到端可运行 |
+| A4.4 | 集成测试 | 端到端测试（使用 Skeleton 数据 + Mock MLLM） | 全链路跑通，无断点 |
+| A4.5 | README 同步更新 | 填写 README.md 全部章节 | 符合 §9.1 规范 |
+
+---
+
+## 四、核心架构决策
+
+### 4.1 双输入模式设计（策略模式）
+
+```
+                    ┌─────────────────────┐
+                    │   DataLoaderFactory  │
+                    └──────────┬──────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              ▼                                 ▼
+   ┌──────────────────────┐        ┌──────────────────────┐
+   │  RGBVideoLoader      │        │  SkeletonLoader      │
+   │  (生产模式)           │        │  (测试/验证模式)      │
+   │  - 读取视频帧         │        │  - 解析骨骼 JSON      │
+   │  - 调用 YOLO-Pose    │        │  - 直接输出关键点      │
+   │  - 输出关键点          │        │  - 绕过神经网络       │
+   └──────────┬───────────┘        └──────────┬───────────┘
+              └────────────────┬──────────────┘
+                               ▼
+                    ┌─────────────────────┐
+                    │  FeatureExtractor    │
+                    │  (消费标准关键点流)   │
+                    └─────────────────────┘
+```
+
+### 4.2 GPU 审批流程
+
+```
+代码需要 GPU → Claude Code 暂停
+             → 向用户说明：预计运行时间 / 显存占用 / 任务必要性
+             → 用户确认「确认使用 GPU」
+             → 执行 GPU 代码
+             → 完成后切回 CPU 模式
+```
+
+### 4.3 MLLM 事件驱动唤醒流
+
+```
+A1 特征流 ──→ A2 异常检测 ──→ 触发事件?
+                                    │
+                           No ──────┴────── Yes
+                            │                  │
+                            ▼                  ▼
+                       继续监控        截取 10-30s 关键片段
+                                            │
+                                            ▼
+                                     A3 Qwen2.5-VL 复核
+                                            │
+                                            ▼
+                                     A4 交叉校验
+                                            │
+                              ┌─────────────┴─────────────┐
+                              ▼                           ▼
+                         一致 (evidence_sufficient)     冲突/不足
+                              │                           │
+                              ▼                           ▼
+                         提升置信度                   status: "uncertain"
+                         触发预警 (可选)              延迟复核 / 不报警
+```
+
+---
+
+## 五、数据接口实现要点
+
+### 5.1 日级统计输出（§6.1）
+
+```python
+# aggregator.py 输出签名
+def aggregate_daily(user_id: str, date: str, window_results: List[WindowMetrics]) -> DailyMetrics:
+    """返回严格符合 daily_metrics Schema 的字典"""
+    return {
+        "user_id": str,
+        "date": "YYYY-MM-DD",
+        "daily_metrics": {
+            "active_minutes": float,
+            "sedentary_ratio": float,
+            "room_transition_count": int,
+            "night_activity_count": int,
+            "social_interaction_minutes": float,
+            "repetitive_path_count": int,
+            "movement_speed": float,
+            "coverage_minutes": float,
+            "feature_confidence": float,
+        }
+    }
+```
+
+### 5.2 MLLM 复核输出（§6.2）
+
+- 使用 `jsonschema` 库对 Qwen 返回做自动校验
+- 缺失 `required` 字段时自动填充默认值并标记 `evidence_sufficient: false`
+- 重试逻辑：首次失败 → 补充 prompt 要求 → 二次失败 → 返回 safe default
+
+---
+
+## 六、测试策略
+
+| 层级 | 策略 | 运行模式 |
+|:---|:---|:---|
+| 单元测试 | 每个模块独立测试，Mock 所有 GPU 依赖 | CPU（无卡模式） |
+| 集成测试 | A1→A2→A3→A4 链路测试，Mock MLLM | CPU（无卡模式） |
+| 精度验证 | 使用 Skeleton V1.2 黄金标准对比特征计算结果 | CPU（无卡模式） |
+| E2E 测试 | 全链路 + 真实模型（需 GPU 审批） | GPU（有卡模式） |
+
+### Mock 策略
+
+- `pose_estimator.py`：Mock 返回预生成的 17 点 COCO 格式关键点
+- `mllm_verifier.py`：Mock 返回符合 §6.2 Schema 的标准 JSON
+- `tracker.py`：Mock 返回稳定的 track_id 序列
+
+---
+
+## 七、风险与应对
+
+| 风险 | 影响 | 应对措施 |
+|:---|:---|:---|
+| `/dataset/` 未挂载 | 无法使用 Toyota Smarthome 数据 | 编写合成数据生成器，优先完成代码逻辑 |
+| RTX 4090 不可用 | 无法测试真实模型推理 | Mock 机制保证全链路可用，GPU 可用后再验证 |
+| Qwen2.5-VL JSON 输出不稳定 | 复核结果不可解析 | 重试 + schema 校验 + 安全默认值兜底 |
+| Untrimmed 视频仅 10 个 | 长周期测试样本不足 | 循环播放模拟长时间流，验证算法稳定性 |
+
+---
+
+## 八、下一步行动
+
+1. **立即启动**：创建目录结构，编写 `config.py` 和 `skeleton_parser.py`
+2. **按顺序推进**：严格遵循 A1 → A2 → A3 → A4 依赖链
+3. **持续交付**：每完成一个子任务即追加操作日志、运行测试
+
+---
+
+> 📋 计划版本: v2.0 | 创建日期: 2026-07-15 | 基于: `video_tasks.md`

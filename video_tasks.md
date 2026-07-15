@@ -37,7 +37,10 @@
   1. **逻辑解耦与独立运行**：所有核心业务逻辑（如任务 A1 的滑动窗口特征计算、任务 A2 的轨迹徘徊检测算法、基础数据解析与格式校验等）在编写时，必须确保**无需 GPU 参与即可在纯 CPU 环境下独立运行并通过单元测试**。
   2. **高可用降级机制**：算法框架必须具备环境感知能力。在没有显卡（即 `torch.cuda.is_available() == False`）的环境下，数据加载器、特征处理管线和非深度学习的统计/几何图算法需保持常态高可用。
   3. **单元测试隔离 (Mock)**：自动化测试（如 Pytest）中涉及神经网络前向传播（如 YOLO 姿态推理、Qwen 大模型复核）的部分，必须设计常规的 `mock` 机制，或者允许在检测到无 GPU 时自动跳过核心权重加载，转而使用本地预存的模拟 JSON 报文或时序特征张量完成全链路跑通。
-* **有卡（RTX 4090）模式触发时机**：仅在执行大规模连续视频流密集跑批、大模型微调训练、或全链路多模态集成性能压测等必须依赖硬件加速的场景时，才开启显卡实例进行作业。
+
+* **有卡（RTX 4090）模式触发时机与审批流程**：
+  1. **触发场景**：仅在执行大规模连续视频流密集跑批、大模型微调训练、或全链路多模态集成性能压测等必须依赖硬件加速的场景时，才考虑开启显卡实例进行作业。
+  2. **GPU 启用审批机制**：**在编写或执行任何需要 GPU 资源的代码（如模型权重加载、训练任务、大规模推理）前，Claude Code 必须先暂停执行，并向用户明确说明预期的算力需求（如：预计运行时间、显存占用、任务必要性）。只有在获得用户明确授权（“确认使用 GPU”）后，方可尝试开启显卡实例进行作业。**
 
 ---
 
@@ -62,9 +65,12 @@
 ## 四、 开发任务详解（A1 - A4）
 
 ### 任务 A1：基础人体检测、跟踪与姿态特征提取
-* **实现目标**：常态化运行于端侧或流媒体服务器，完成基础行为的无感感知。
-* **数据资产对接要求**：
-  * 利用 `Toyota Smarthome` 的 **Trimmed Refined Skeleton Data (V1.2)** 作为输入流，编写单元测试来验证 `VideoFeatureExtractor` 是否能正确从标准骨骼数据中提取出运动指标。
+* **实现目标**：构建以原始视频流为输入、结构化特征为输出的感知基座。常态化运行于端侧或流媒体服务器，完成基础行为的无感感知。
+* **Pipeline 与数据对接要求**：
+  * **核心流水线**：系统应实现 `VideoStream -> YOLOv8-Pose (推理) -> ByteTrack (跟踪) -> 关键点平滑与特征计算` 的实时 Pipeline。
+  * **测试兼容性**：在编写 `VideoFeatureExtractor` 时，必须实现双输入模式：
+      1. **生产模式**：读取 RGB 视频流/摄像头流，实时推理提取关键点。
+      2. **测试模式**：直接读取 `Toyota Smarthome V1.2 Skeleton` 文件作为特征计算的输入，以验证特征算法（如运动速度、活动时长）的数学正确性。
 * **具体产出指标**（日级/小时级聚合）：
   1. **活动分钟数（activity_minutes）**：老人处于非静止状态的累计时长。
   2. **久坐/静止比例（sedentary_ratio）**：单次或累计保持坐姿、卧姿且无大幅度动作的时长占比。
@@ -73,7 +79,7 @@
   5. **夜间活动次数与时长（night_activity_stats）**：在设定的夜间时段（如22:00-06:00）内的起身及走动统计。
   6. **多人共现时长（multi_person_duration）**：画面中同时出现两个及以上人体目标的时间段。
 * **Claude Code 代码编写指令**：
-  > “请编写一个基于 Python 的视频特征提取基类 `VideoFeatureExtractor`。支持两种输入模式：1) 调用 YOLOv8-Pose 实时提取视频流人体骨骼关键点；2) 直接读取本地 `Toyota Smarthome V1.2 Skeleton` 文件作为时序关键点。结合 ByteTrack 实现多目标跟踪，设计高性能时序滑动窗口，每隔固定周期，计算并输出包含上述 6 项基础指标的结构化时序字典。确保接口高度解耦，数据加载部分需适配官方提供的 Skeleton Data Loader 逻辑。”
+  > “请编写一个基于 Python 的视频特征提取基类 `VideoFeatureExtractor`。系统必须以 RGB 视频流为主要输入，内置 YOLOv8-Pose 和 ByteTrack 模块，实现人体关键点提取与多目标跟踪。同时，为保证算法验证的准确性，请增加一个针对 `Toyota Smarthome V1.2 Skeleton` 格式的数据加载适配器，使得算法能直接对预存的骨骼关键点进行特征计算。结合滑动窗口逻辑，每隔固定周期，计算并输出包含上述 6 项基础指标的结构化时序字典。确保 Pipeline 接口高度解耦，数据输入端可灵活切换为‘摄像头实时流’或‘预存骨骼 JSON 文件’。”
 
 ### 任务 A2：专项高危与异常行为统计模块
 * **实现目标**：针对防跌倒、心理筛查和反诈骗三大场景，编写特定的时序行为判定算法。
@@ -115,9 +121,7 @@ ightarrow$ 触发中高风险预警）。
 同学A所输出的视频特征与 MLLM 证据，将作为底层公共能力，同时对跌倒前置防控、心理健康和反诈骗三大模块进行支撑。在编写代码时，需确保数据字典能无缝对接以下三个业务逻辑：
 
 ### 5.1 赋能动作防跌倒模块（2.3.1 & 4.1.2 场景）
-* **骨骼时序流对接**：同学A提取的人体 2D 骨骼关键点时序序列（坐标、倾斜角、加速度、支撑脚稳定性），必须以高频流（如 15fps-30fps）形式实时向后端的 LSTM / 动态图神经网络（DGNN）输送，用于识别“稳定活动 $
-ightarrow$ 失衡瞬态 $
-ightarrow$ 跌倒发生”的过程。
+* **骨骼时序流对接**：同学A提取的人体 2D 骨骼关键点时序序列（坐标、倾斜角、加速度、支撑脚稳定性），**由 YOLO-Pose 实时推理得出**。该流数据（需支持以 15fps-30fps 的频率）必须实时向后端的 LSTM / 动态图神经网络（DGNN）输送，用于识别“稳定活动 $\rightarrow$ 失衡瞬态 $\rightarrow$ 跌倒发生”的过程。
 * **环境动态异动**：通过轻量异动检测，在发生水杯打翻、液体泼洒、杂物坠落瞬间截取画面，通知大模型判断是否在老人未来行走路径上形成了“水渍溢洒”或“静态绊倒隐患”。
 * **多摄像头多视角调度**：若客厅主摄像头发生家具遮挡或人体转身导致关键点丢失，需设计接口接收相邻视角摄像头的画面，执行时空交叉几何对齐与置信度加权融合。
 
@@ -128,7 +132,6 @@ ightarrow$ 跌倒发生”的过程。
 ### 5.3 赋能诈骗风险阻断模块（2.3.3 & 4.1.1 场景）
 * **入户人脸多帧聚合比对**：从门口摄像头画面定位人脸，提取特征向量，与家庭安全人员库（包含家人、物业、亲友等）进行比对。需编写连续多帧人脸聚合算法，采用最大置信度和时序一致性判定来访身份，若非可信人员，触发“陌生人到访记录”。
 * **室内涉诈交互动作与敏感物品检测**：在客厅或门口区域，专门开启针对银行卡、身份证、收据合同、保健品、宣传单页、POS机等特定敏感物品的检测目标。同时通过多目标跟踪，计算室内是否有“多人围坐劝说”、“引导老人签字”、“展示二维码”的高危交互模式。
-
 ---
 
 ## 六、 核心数据接口规范与 JSON Schema
@@ -138,30 +141,18 @@ ightarrow$ 跌倒发生”的过程。
 ### 6.1 视频结构化行为特征输出接口（日级/周期级统计）
 ```json
 {
-  "user_id": "ELDER_603211",
-  "device_id": "CAMERA_LIVING_01",
-  "time_window": {
-    "start_time": "2026-07-14T00:00:00Z",
-    "end_time": "2026-07-14T23:59:59Z"
-  },
-  "monitoring_quality": {
-    "effective_duration_seconds": 72000,
-    "occlusion_ratio": 0.08,
-    "quality_confidence": 0.92
-  },
-  "basic_features": {
-    "activity_minutes": 245.5,
-    "sedentary_ratio": 0.68,
-    "room_transitions": 14,
-    "average_velocity": 0.42,
-    "night_activity_count": 2,
-    "night_activity_duration_seconds": 450
-  },
-  "special_behaviors": {
-    "pacing_event_count": 1,
-    "repetitive_seeking_count": 0,
-    "circadian_shift_minutes": 15,
-    "social_interaction_duration_seconds": 1800
+  "user_id": "STRING",
+  "date": "YYYY-MM-DD",
+  "daily_metrics": {
+    "active_minutes": "FLOAT (分/日)",
+    "sedentary_ratio": "FLOAT (%)",
+    "room_transition_count": "INT (次/日)",
+    "night_activity_count": "INT (次/夜)",
+    "social_interaction_minutes": "FLOAT (分/日)",
+    "repetitive_path_count": "INT (次/日)",
+    "movement_speed": "FLOAT (m/s 或 相对值)",
+    "coverage_minutes": "FLOAT (分/日)",
+    "feature_confidence": "FLOAT (0-1)"
   }
 }
 ```
@@ -170,27 +161,50 @@ ightarrow$ 跌倒发生”的过程。
 ```json
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "MLLM_Event_Verification",
+  "title": "Qwen2.5_VL_Event_Verification",
   "type": "object",
   "properties": {
-    "event_id": { "type": "string" },
-    "scene_type": { "enum": ["living_room", "bedroom", "kitchen", "entrance", "bathroom", "unknown"] },
-    "observed_evidence": {
-      "type": "object",
-      "properties": {
-        "human_activity_state": { "enum": ["active_reading_or_crafting", "passive_sitting_or_dosing", "aimless_pacing", "normal_walking", "unstable_gait", "lying_down", "unknown"] },
-        "interaction_context": { "enum": ["alone_watching_tv_or_resting", "interacting_with_family", "interacting_with_stranger_or_salesperson", "no_interaction", "unknown"] },
-        "visible_sensitive_items": {
-          "type": "array",
-          "items": { "enum": ["bank_card", "id_card", "contract_or_document", "health_products_or_medicine", "flyer_or_brochure", "pos_machine", "none"] }
-        }
-      },
-      "required": ["human_activity_state", "interaction_context", "visible_sensitive_items"]
+    "event_type": {
+      "type": "string",
+      "enum": ["long_inactivity", "social_interaction", "repetitive_behavior"]
     },
-    "model_confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
-    "uncertain_factors_description": { "type": "string" }
+    "observable_evidence": {
+      "type": "string",
+      "description": "只描述画面可见事实，如：连续坐姿、无明显肢体运动、桌面有书"
+    },
+    "start_sec": { "type": "number" },
+    "end_sec": { "type": "number" },
+    "activity_state": {
+      "type": "string",
+      "enum": ["active", "sedentary", "uncertain"]
+    },
+    "social_context": {
+      "type": "string",
+      "enum": ["alone", "co_present", "interacting", "uncertain"]
+    },
+    "repetition_type": {
+      "type": "string",
+      "enum": ["same_route", "repeated_search", "none", "uncertain"]
+    },
+    "quality_flags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["occlusion", "low_light", "off_camera"]
+      }
+    },
+    "evidence_sufficient": { "type": "boolean" }
   },
-  "required": ["event_id", "scene_type", "observed_evidence", "model_confidence", "uncertain_factors_description"]
+  "required": [
+    "event_type", 
+    "observable_evidence", 
+    "start_sec", 
+    "end_sec", 
+    "activity_state", 
+    "social_context", 
+    "repetition_type", 
+    "evidence_sufficient"
+  ]
 }
 ```
 
@@ -202,10 +216,10 @@ ightarrow$ 跌倒发生”的过程。
 
 | 时间节点 | 核心任务 | Claude Code 辅助编写重点 | 最终交付产物标准 |
 | :--- | :--- | :--- | :--- |
-| **第 1-2 天** | 数据集接入与基础骨骼 Tracking 管线 | 编写适配 `Toyota Smarthome V1.2` 骨骼数据的 DataLoader。实现摄像头视频流接入、关键点时序滑动窗口计算代码。 | 能够稳定解析本地 Skeleton 资产或 RTSP 流，输出标准骨骼坐标与 A1 级基础行为特征字典。 |
-| **第 3-4 天** | 编写专项行为判定逻辑与多视角融合 | 结合 `Untrimmed Annotation` 模拟行为流，编写时序路径匹配（徘徊检测）、高频动作计数（开关门）代码。 | 完成 `SpecialBehaviorDetector` 模块，通过基准数据集测试用例，保证特征带质量得分和时间窗。 |
-| **第 5 天** | 集成 Qwen2.5-VL-7B 驱动引擎 | 配置大模型的本地推理管线（vLLM），利用 `Trimmed RGB Data` 的典型片段设计 few-shot 结构化 Prompt。 | 视频片段输入后，模型能够百分百返回不带 markdown 标记的纯净、合法 JSON 数据。 |
-| **第 6-7 天** | 一致性校验、异常阻断与联调测试 | 编写 A4 级多模型冲突校验逻辑，生成 10 个以上的视频测试日志包。与问卷模块、语音模块进行接口对接。 | 完整跑通“动作检测-时序异常触发-大模型复核-双重确认/拒判-分级结构化 JSON 输出”的全链路闭环。 |
+| **第 1-2 天** | 视频感知基座与数据加载架构 | 编写 `VideoFeatureExtractor`，实现 **“视频流(生产模式)”** 与 **“骨骼数据(验证模式)”** 双路加载。构建滑动窗口特征计算逻辑。 | 能够稳定从 RGB 视频解析，并使用 Skeleton 数据集进行精度对齐；输出符合 `daily_metrics` 定义的结构化特征字典。 |
+| **第 3-4 天** | 专项行为算法与逻辑解耦 | 结合 `Untrimmed Annotation` 模拟真实长视频流，编写徘徊、重复行为判定算法，确保逻辑与基础指标解耦。 | 完成 `SpecialBehaviorDetector` 模块，测试用例必须覆盖 `repetitive_path_count` 等业务字段的准确计算。 |
+| **第 5 天** | 集成 Qwen2.5-VL 事件复核引擎 | 配置本地 vLLM 推理管线；**强制约束 Prompt 必须返回完全符合第 6.2 节 Schema 定义的 JSON**，禁止 markdown 包装。 | 模型返回的 JSON 必须通过 `json.loads()` 校验，且字段包含 `observable_evidence`, `activity_state` 等标准枚举值。 |
+| **第 6-7 天** | 一致性校验与拒判闭环集成 | 编写 A4 级校验逻辑，基于 `evidence_sufficient` 标志位实现拒判。对接问卷与语音模块的接口联调。 | 完整闭环：视频流输入 $\rightarrow$ 异常触发 $\rightarrow$ 大模型复核 $\rightarrow$ **基于 `evidence_sufficient` 的真值过滤** $\rightarrow$ 最终结构化输出。 |
 
 ---
 

@@ -1,313 +1,387 @@
-"""1.1 — Toyota Smarthome Skeleton V1.2 DataLoader.
+"""双模式数据加载器。
 
-Reads skeleton JSON files from the compressed zip archive or an extracted
-directory.  Parses per-frame 2D / 3D pose data and exposes them through
-a clean, typed interface suitable for downstream feature extraction.
+实现策略模式的 DataLoader：
+  - 生产模式 (RGBVideoLoader)：读取视频文件/摄像头流 → 逐帧输出 RGB 图像
+  - 验证模式 (SkeletonLoader)：读取 Toyota Smarthome Skeleton V1.2 JSON → 直接输出关键点
 
-Supports:
-- Direct reading from .zip (default) or extracted directory
-- Lazy file listing & per-file loading
-- Frame-level iteration with person filtering
-- Sliding-window generator built on top of the raw frame stream
-- Pure CPU — no GPU dependency
+两种模式均返回统一的标准化的 PerFrameData，FeatureExtractor 不感知数据来源。
+
+纯 CPU 实现（SkeletonLoader）/ 可选的 GPU 推理（RGBVideoLoader 的实际推理在 pose_estimator 中进行）。
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import zipfile
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator, Optional, Sequence
+from typing import Dict, Iterator, List, Optional, Tuple
 
 import numpy as np
 
-from .config import JOINT_NAMES, NUM_JOINTS
+from src.utils.skeleton_parser import SkeletonParser
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Typed data containers
-# ---------------------------------------------------------------------------
 
-
-@dataclass
-class PersonPose:
-    """Pose data for a single person in a single frame."""
-
-    person_index: int
-    pose2d: np.ndarray  # shape (NUM_JOINTS, 2)  — pixel coordinates
-    pose3d: np.ndarray  # shape (NUM_JOINTS, 3)  — camera-relative (m)
-
+# ============================================================
+# 标准化帧数据结构
+# ============================================================
 
 @dataclass
-class SkeletonFrame:
-    """All tracked persons in a single frame."""
+class PerFrameData:
+    """单帧标准化数据。
 
-    frame_index: int
-    persons: list[PersonPose]  # length ≤ K (may be empty if no detection)
-    num_joints: int = NUM_JOINTS
-
-
-@dataclass
-class SkeletonSequence:
-    """Full skeleton sequence loaded from a single JSON file.
-
-    Attributes:
-        file_stem:  Original filename without extension, e.g.
-                    ``Cook.Cleandishes_p02_r00_v02_c03_pose3d``.
-        num_joints: Number of skeleton joints (always 13 for V1.2).
-        max_people: Maximum people tracked simultaneously (K).
-        frames:     List of SkeletonFrame ordered by frame index.
+    所有 DataLoader 实现必须输出此结构。
+    FeatureExtractor 仅依赖此结构进行特征计算。
     """
 
-    file_stem: str
-    num_joints: int
-    max_people: int
-    frames: list[SkeletonFrame] = field(default_factory=list)
-
-    @property
-    def num_frames(self) -> int:
-        return len(self.frames)
-
-
-# ---------------------------------------------------------------------------
-# SkeletonDataLoader
-# ---------------------------------------------------------------------------
+    frame_index: int                              # 帧序号（从 0 开始）
+    timestamp: float                               # 时间戳（秒）
+    image: Optional[np.ndarray] = None             # RGB 图像 (H, W, 3)，skeleton 模式为 None
+    keypoints: Optional[np.ndarray] = None         # 关键点 (K, 3)，video 模式推理前为 None
+    track_ids: Optional[List[int]] = None          # 跟踪 ID 列表（每个检测目标一个）
+    bboxes: Optional[np.ndarray] = None            # 检测框 (N, 4) xyxy 格式
+    source_type: str = "unknown"                   # "video" / "skeleton" / "camera"
+    metadata: Dict = field(default_factory=dict)   # 额外元数据
 
 
-class SkeletonDataLoader:
-    """Loader for Toyota Smarthome Refined Skeleton V1.2 data.
+# ============================================================
+# DataLoader 抽象基类
+# ============================================================
 
-    Can read directly from the official ``toyota_smarthome_skeleton_v1.2.zip``
-    or from an extracted directory of JSON files.
+class DataLoader(ABC):
+    """数据加载器抽象基类。
 
-    Usage::
-
-        loader = SkeletonDataLoader("/data/toyota_smarthome_skeleton_v1.2.zip")
-        files = loader.list_files()               # discover available sequences
-        seq = loader.load("Cook.Cleandishes_p02_r00_v02_c03_pose3d")
-
-        for frame in seq.frames:
-            for person in frame.persons:
-                pelvis_xy = person.pose2d[0]      # (x, y) in pixels
-                pelvis_3d = person.pose3d[0]      # (x, y, z) in metres
+    所有具体实现必须提供统一的 frames() 迭代器，
+    输出标准化的 PerFrameData。
     """
 
-    def __init__(self, source_path: str | Path) -> None:
-        """
-        Args:
-            source_path: Path to the skeleton .zip archive **or** an
-                         extracted directory containing ``*_pose3d.json`` files.
-        """
-        self._source = Path(source_path)
-        if not self._source.exists():
-            raise FileNotFoundError(f"Skeleton source not found: {self._source}")
-
-        self._is_zip = self._source.is_file() and self._source.suffix == ".zip"
-        self._zf: zipfile.ZipFile | None = None
-
-        if self._is_zip:
-            self._zf = zipfile.ZipFile(self._source, "r")
-            self._file_list: list[str] = sorted(
-                name
-                for name in self._zf.namelist()
-                if name.endswith("_pose3d.json")
-            )
-        else:
-            self._file_list = sorted(
-                p.name
-                for p in self._source.glob("*_pose3d.json")
-            )
-
-        logger.info(
-            "SkeletonDataLoader ready: %d sequences found (%s mode).",
-            len(self._file_list),
-            "zip" if self._is_zip else "directory",
-        )
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def list_files(self) -> list[str]:
-        """Return the sorted list of available skeleton file names (full paths
-        inside the zip, or bare filenames for a directory)."""
-        return list(self._file_list)
-
-    @property
-    def file_count(self) -> int:
-        return len(self._file_list)
-
-    def load(self, filename: str) -> SkeletonSequence:
-        """Load and parse a single skeleton JSON file.
-
-        Args:
-            filename: Either a full zip-internal path or a bare filename,
-                      e.g. ``"Cook.Cleandishes_p02_r00_v02_c03_pose3d.json"``.
-
-        Returns:
-            Fully parsed SkeletonSequence.
-        """
-        raw = self._read_json(filename)
-        return self._parse(raw, filename)
-
-    def load_by_index(self, index: int) -> SkeletonSequence:
-        """Load the *index*-th skeleton file from the file list."""
-        return self.load(self._file_list[index])
-
-    def iter_frames(
-        self,
-        filename: str,
-        person_indices: Optional[Sequence[int]] = None,
-    ) -> Iterator[SkeletonFrame]:
-        """Lazy frame iterator for a single sequence.
-
-        Args:
-            filename: Skeleton file to load.
-            person_indices: If given, only return poses for these person
-                            indices (0-based).  ``None`` means all persons.
-        """
-        seq = self.load(filename)
-        for frame in seq.frames:
-            if person_indices is not None:
-                frame = SkeletonFrame(
-                    frame_index=frame.frame_index,
-                    persons=[p for p in frame.persons if p.person_index in person_indices],
-                    num_joints=frame.num_joints,
-                )
-            yield frame
-
-    def iter_sliding_windows(
-        self,
-        filename: str,
-        window_size: int = 30,
-        stride: int = 15,
-        person_indices: Optional[Sequence[int]] = None,
-    ) -> Iterator[list[SkeletonFrame]]:
-        """Generate sliding windows over a skeleton sequence.
-
-        Each window is a list of ``SkeletonFrame`` objects covering
-        ``window_size`` consecutive frames.  Windows advance by ``stride``
-        frames.  If the remaining frames are fewer than ``window_size`` the
-        final window is **shorter** (tail window).
-
-        Args:
-            filename: Skeleton file to load.
-            window_size: Number of frames per window.
-            stride: Frame offset between successive windows.
-            person_indices: Optional person filter.
+    @abstractmethod
+    def frames(self) -> Iterator[PerFrameData]:
+        """返回帧数据迭代器。
 
         Yields:
-            List of SkeletonFrame, one window at a time.
+            PerFrameData 对象。
         """
-        frames = list(self.iter_frames(filename, person_indices))
-        total = len(frames)
-        start = 0
-        while start < total:
-            yield frames[start : start + window_size]
-            start += stride
+        ...
 
+    @abstractmethod
+    def get_fps(self) -> float:
+        """获取数据流的帧率。"""
+        ...
+
+    @abstractmethod
+    def get_total_frames(self) -> int:
+        """获取总帧数。不可预估时返回 -1。"""
+        ...
+
+    @abstractmethod
     def close(self) -> None:
-        """Release the underlying zip file handle (no-op for directory mode)."""
-        if self._zf is not None:
-            self._zf.close()
-            self._zf = None
+        """释放资源。"""
+        ...
 
-    def __enter__(self) -> "SkeletonDataLoader":
+    def __enter__(self):
         return self
 
-    def __exit__(self, *args: object) -> None:
+    def __exit__(self, *args):
         self.close()
+
+    def __iter__(self):
+        return self.frames()
+
+
+# ============================================================
+# RGB 视频加载器（生产模式）
+# ============================================================
+
+class RGBVideoLoader(DataLoader):
+    """从视频文件或摄像头流读取 RGB 帧。
+
+    仅负责帧读取和预处理，不执行推理（推理在 PoseEstimator 中）。
+    """
+
+    def __init__(
+        self,
+        source: str,
+        source_type: str = "file",
+        target_fps: float = 15.0,
+        target_width: int = 640,
+        target_height: int = 480,
+        max_frames: Optional[int] = None,
+    ) -> None:
+        """
+        Args:
+            source: 视频文件路径 或 摄像头设备 ID 字符串。
+            source_type: "file" / "camera" / "rtsp"。
+            target_fps: 目标帧率。
+            target_width: 输出帧宽度。
+            target_height: 输出帧高度。
+            max_frames: 最大读取帧数，None 表示不限。
+        """
+        self._source = source
+        self._source_type = source_type
+        self._target_fps = target_fps
+        self._target_width = target_width
+        self._target_height = target_height
+        self._max_frames = max_frames
+
+        # 延迟导入以避免循环依赖
+        from src.video_analysis.video_stream import (
+            CameraStream,
+            FileVideoStream,
+            RTSPStream,
+        )
+
+        if source_type == "file":
+            self._stream = FileVideoStream(
+                source, target_fps, target_width, target_height
+            )
+        elif source_type == "camera":
+            device_id = int(source) if source.isdigit() else 0
+            self._stream = CameraStream(
+                device_id, target_fps, target_width, target_height
+            )
+        elif source_type == "rtsp":
+            self._stream = RTSPStream(
+                source, target_fps, target_width, target_height
+            )
+        else:
+            raise ValueError(f"Unknown source_type: {source_type}")
+
+    def frames(self) -> Iterator[PerFrameData]:
+        frame_idx = 0
+        for rgb_frame, ts in self._stream:
+            if self._max_frames is not None and frame_idx >= self._max_frames:
+                break
+
+            yield PerFrameData(
+                frame_index=frame_idx,
+                timestamp=ts,
+                image=rgb_frame,
+                keypoints=None,      # 由 PoseEstimator 后续填充
+                track_ids=None,
+                bboxes=None,
+                source_type=self._source_type,
+                metadata={
+                    "source": self._source,
+                    "original_fps": self._stream.get_fps(),
+                },
+            )
+            frame_idx += 1
+
+    def get_fps(self) -> float:
+        return self._target_fps
+
+    def get_total_frames(self) -> int:
+        native = self._stream.get_frame_count()
+        if self._max_frames is not None and native > 0:
+            return min(native, self._max_frames)
+        return native
+
+    def close(self) -> None:
+        self._stream.close()
 
     def __repr__(self) -> str:
         return (
-            f"SkeletonDataLoader(source={self._source!r}, "
-            f"files={len(self._file_list)}, is_zip={self._is_zip})"
+            f"RGBVideoLoader(source={self._source[:50]}, "
+            f"type={self._source_type}, fps={self._target_fps})"
         )
 
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
 
-    def _read_json(self, filename: str) -> dict:
-        """Read the raw JSON dict for *filename*."""
-        if self._is_zip:
-            assert self._zf is not None
-            # Accept both bare name and full zip path
-            if filename not in self._zf.namelist():
-                # Try with .json suffix
-                candidate = filename if filename.endswith(".json") else filename + ".json"
-                if candidate in self._zf.namelist():
-                    filename = candidate
-            with self._zf.open(filename) as fh:
-                return json.load(fh)  # type: ignore[no-any-return]
-        else:
-            filepath = self._source / filename
-            with open(filepath, encoding="utf-8") as fh:
-                return json.load(fh)  # type: ignore[no-any-return]
+# ============================================================
+# 骨骼数据加载器（验证/测试模式）
+# ============================================================
+
+class SkeletonLoader(DataLoader):
+    """从 Toyota Smarthome Skeleton V1.2 JSON 文件加载预存关键点。
+
+    绕过神经网络推理，直接输出标准化的关键点序列。
+    用于验证特征计算算法的数学正确性。
+    """
+
+    def __init__(
+        self,
+        skeleton_path: str,
+        fps: float = 15.0,
+        image_width: float = 640.0,
+        image_height: float = 480.0,
+        load_images: bool = False,
+        image_dir: Optional[str] = None,
+    ) -> None:
+        """
+        Args:
+            skeleton_path: Skeleton JSON 文件路径。
+            fps: 骨骼数据的原始帧率。
+            image_width: 图像宽度（用于坐标反归一化参考）。
+            image_height: 图像高度。
+            load_images: 是否同步加载对应的 RGB 图像（默认不加载以节省内存）。
+            image_dir: RGB 图像目录（load_images=True 时需要）。
+        """
+        self._skeleton_path = Path(skeleton_path)
+        self._fps = fps
+        self._image_width = image_width
+        self._image_height = image_height
+        self._load_images = load_images
+        self._image_dir = Path(image_dir) if image_dir else None
+
+        if not self._skeleton_path.exists():
+            raise FileNotFoundError(f"Skeleton file not found: {skeleton_path}")
+
+        self._parser = SkeletonParser(image_width, image_height)
+
+        # 解析骨骼数据
+        self._keypoints: np.ndarray = self._parser.parse_file(str(self._skeleton_path))
+        # shape: (T, K, 3)
+        self._total_frames = self._keypoints.shape[0]
+
+        logger.info(
+            f"SkeletonLoader loaded: {self._total_frames} frames, "
+            f"{self._keypoints.shape[1]} keypoints, "
+            f"fps={fps}"
+        )
+
+    @property
+    def keypoints_array(self) -> np.ndarray:
+        """返回完整的 (T, K, 3) 关键点数组（只读视图）。"""
+        return self._keypoints
+
+    @property
+    def total_frames(self) -> int:
+        return self._total_frames
+
+    @property
+    def duration_sec(self) -> float:
+        return self._total_frames / self._fps
+
+    def frames(self) -> Iterator[PerFrameData]:
+        """逐帧迭代，输出标准化的 PerFrameData。"""
+        for i in range(self._total_frames):
+            ts = i / self._fps
+            kps = self._keypoints[i].copy()  # (K, 3)
+
+            # 可选：加载对应 RGB 图像
+            image = None
+            if self._load_images and self._image_dir:
+                image = self._load_frame_image(i)
+
+            yield PerFrameData(
+                frame_index=i,
+                timestamp=ts,
+                image=image,
+                keypoints=kps,
+                track_ids=[0],  # 骨骼文件通常已绑定单一个体
+                bboxes=None,
+                source_type="skeleton",
+                metadata={
+                    "skeleton_file": str(self._skeleton_path),
+                    "fps": self._fps,
+                },
+            )
+
+    def _load_frame_image(self, frame_index: int) -> Optional[np.ndarray]:
+        """尝试加载对应帧的 RGB 图像。"""
+        if not self._image_dir:
+            return None
+
+        try:
+            import cv2
+        except ImportError:
+            return None
+
+        # 尝试多种命名模式
+        patterns = [
+            self._image_dir / f"frame_{frame_index:06d}.jpg",
+            self._image_dir / f"frame_{frame_index:04d}.jpg",
+            self._image_dir / f"{frame_index:06d}.jpg",
+            self._image_dir / f"img_{frame_index:05d}.jpg",
+        ]
+        for p in patterns:
+            if p.exists():
+                img = cv2.imread(str(p))
+                if img is not None:
+                    return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        return None
+
+    def get_slice(
+        self, start_sec: float, end_sec: float
+    ) -> Tuple[np.ndarray, int, int]:
+        """获取指定时间区间的关键点切片。
+
+        Args:
+            start_sec: 起始时间（秒）。
+            end_sec: 结束时间（秒）。
+
+        Returns:
+            (keypoints_slice, start_frame, end_frame)
+        """
+        start_frame = max(0, int(start_sec * self._fps))
+        end_frame = min(self._total_frames, int(end_sec * self._fps) + 1)
+        return (
+            self._keypoints[start_frame:end_frame].copy(),
+            start_frame,
+            end_frame,
+        )
+
+    def get_fps(self) -> float:
+        return self._fps
+
+    def get_total_frames(self) -> int:
+        return self._total_frames
+
+    def close(self) -> None:
+        pass  # 无需释放资源
+
+    def __repr__(self) -> str:
+        return (
+            f"SkeletonLoader(file={self._skeleton_path.name}, "
+            f"frames={self._total_frames}, fps={self._fps})"
+        )
+
+
+# ============================================================
+# DataLoader 工厂
+# ============================================================
+
+class DataLoaderFactory:
+    """DataLoader 工厂。
+
+    根据 source_type 自动创建对应的加载器实例。
+    """
 
     @staticmethod
-    def _parse(raw: dict, file_stem: str) -> SkeletonSequence:
-        """Convert a raw dict into a typed SkeletonSequence."""
-        njts = raw.get("njts", NUM_JOINTS)
-        K = raw.get("K", 1)
-        raw_frames: list = raw.get("frames", [])
+    def create(
+        source: str,
+        source_type: str = "file",
+        **kwargs,
+    ) -> DataLoader:
+        """创建 DataLoader。
 
-        if njts != NUM_JOINTS:
-            logger.warning(
-                "%s: expected %d joints, got %d — using declared count.",
-                file_stem,
-                NUM_JOINTS,
-                njts,
+        Args:
+            source: 数据源（文件路径 / 设备 ID / RTSP URL）。
+            source_type:
+              - "file" / "video" → RGBVideoLoader
+              - "camera" / "webcam" → RGBVideoLoader
+              - "rtsp" → RGBVideoLoader
+              - "skeleton" → SkeletonLoader
+            **kwargs: 传递给具体加载器的额外参数。
+
+        Returns:
+            DataLoader 实例。
+        """
+        if source_type in ("file", "video", "camera", "webcam", "rtsp"):
+            if source_type in ("video",):
+                source_type = "file"
+            if source_type in ("webcam",):
+                source_type = "camera"
+            return RGBVideoLoader(source=source, source_type=source_type, **kwargs)
+
+        elif source_type == "skeleton":
+            return SkeletonLoader(skeleton_path=source, **kwargs)
+
+        else:
+            raise ValueError(
+                f"Unknown source_type: {source_type}. "
+                f"Available: file, camera, rtsp, skeleton"
             )
-
-        frames: list[SkeletonFrame] = []
-        for fi, frame_data in enumerate(raw_frames):
-            persons: list[PersonPose] = []
-            for pi, person_data in enumerate(frame_data):
-                pose2d_raw = person_data.get("pose2d", [])
-                pose3d_raw = person_data.get("pose3d", [])
-
-                if not pose2d_raw and not pose3d_raw:
-                    continue  # empty detection slot
-
-                pose2d = np.array(pose2d_raw, dtype=np.float32).reshape(njts, 2)
-                pose3d = np.array(pose3d_raw, dtype=np.float32).reshape(njts, 3)
-
-                persons.append(
-                    PersonPose(person_index=pi, pose2d=pose2d, pose3d=pose3d)
-                )
-
-            frames.append(
-                SkeletonFrame(frame_index=fi, persons=persons, num_joints=njts)
-            )
-
-        stem = Path(file_stem).stem  # strip .json if present
-        return SkeletonSequence(
-            file_stem=stem,
-            num_joints=njts,
-            max_people=K,
-            frames=frames,
-        )
-
-
-# ---------------------------------------------------------------------------
-# Utility – joint-name accessor
-# ---------------------------------------------------------------------------
-
-
-def get_joint_name(index: int) -> str:
-    """Return the human-readable name for joint *index* (0–12)."""
-    if 0 <= index < NUM_JOINTS:
-        return JOINT_NAMES[index]
-    raise IndexError(f"Joint index {index} out of range [0, {NUM_JOINTS - 1}]")
-
-
-def get_joint_index(name: str) -> int:
-    """Return the index for a named joint."""
-    try:
-        return JOINT_NAMES.index(name)
-    except ValueError:
-        raise KeyError(f"Unknown joint name: {name!r}") from None

@@ -7,7 +7,8 @@
       "Bash(tar xzf *)",
       "Bash(python *)",
       "Bash(pip install *)",
-      "Bash(python3 *)"
+      "Bash(python3 *)",
+      "Bash(pip show *)"
     ]
   }
 }

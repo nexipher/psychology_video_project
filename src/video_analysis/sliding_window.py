@@ -1,208 +1,184 @@
-"""1.5 — High-performance temporal sliding window.
+"""通用滑动窗口数据结构。
 
-Built on ``collections.deque`` for O(1) push/pop at both ends.  Designed to
-run on CPU with amortised per-push cost well under 1.5 ms so that it never
-becomes the bottleneck in a real-time 30 fps pipeline.
-
-Typical usage::
-
-    sw = SlidingWindow(window_size=30, stride=15)
-    for frame in frame_stream:
-        sw.push(frame)
-        if sw.is_ready():
-            window = sw.get_window()      # list of last ≤30 frames
-            features = compute(window)    # your feature-extraction logic
-            sw.advance()                  # drop *stride* oldest frames
+固定时间窗长度，O(1) 插入/淘汰，线程安全。
+纯 CPU 实现，用于时序特征实时计算。
 """
 
 from __future__ import annotations
 
-import time
+import threading
 from collections import deque
-from typing import Deque, Generic, Iterator, Optional, TypeVar
-
-from .config import DEFAULT_WINDOW_SIZE, DEFAULT_WINDOW_STRIDE
-
-T = TypeVar("T")
-
-# ---------------------------------------------------------------------------
-# SlidingWindow
-# ---------------------------------------------------------------------------
+from typing import Any, Callable, Dict, List, Optional
 
 
-class SlidingWindow(Generic[T]):
-    """Fixed-capacity FIFO sliding window with stride-based advancement.
+class SlidingWindow:
+    """固定容量 + 固定时间跨度的滑动窗口。
 
-    Frames are pushed one at a time via :meth:`push`.  Once the window reaches
-    *window_size* items (i.e. :meth:`is_ready` returns `True`), callers can
-    read :meth:`get_window` to obtain the current slice and then
-    :meth:`advance` to drop *stride* oldest items — the window immediately
-    starts collecting toward the next output.
+    每条记录附带宽泛的时间戳 (timestamp)，窗口按两个维度约束:
+    1. max_size: 最大记录数
+    2. max_duration_sec: 最大时间跨度
 
-    Parameters:
-        window_size: Maximum number of items held in the window.
-        stride:      How many items to drop on each :meth:`advance`.
+    任一约束触发即淘汰最早记录。
+
+    Thread-safe.
     """
 
     def __init__(
         self,
-        window_size: int = DEFAULT_WINDOW_SIZE,
-        stride: int = DEFAULT_WINDOW_STRIDE,
+        max_size: int = 300,
+        max_duration_sec: float = 300.0,
+        timestamp_key: str = "timestamp",
     ) -> None:
-        if window_size < 1:
-            raise ValueError(f"window_size must be >= 1, got {window_size}")
-        if stride < 1:
-            raise ValueError(f"stride must be >= 1, got {stride}")
-
-        self.window_size: int = window_size
-        self.stride: int = stride
-        self._buffer: Deque[T] = deque(maxlen=window_size)
-
-        # Internal frame counter (total pushes)
-        self._total_pushes: int = 0
-
-        # Performance tracking
-        self._last_push_time_ns: int = 0
-        self._last_advance_time_ns: int = 0
-
-    # ------------------------------------------------------------------
-    # Core API
-    # ------------------------------------------------------------------
-
-    def push(self, item: T) -> None:
-        """Push a single item into the window.
-
-        If the buffer is already full (len == window_size), the oldest item
-        is silently dropped — in that scenario :meth:`advance` should have
-        been called first, but we handle it gracefully.
-
-        Complexity: O(1) amortised.
         """
-        t0 = time.perf_counter_ns()
-        self._buffer.append(item)
-        self._total_pushes += 1
-        self._last_push_time_ns = time.perf_counter_ns() - t0
-
-    def is_ready(self) -> bool:
-        """Return True once exactly ``window_size`` items have accumulated."""
-        return len(self._buffer) == self.window_size
-
-    @property
-    def is_full(self) -> bool:
-        """Alias for :meth:`is_ready`."""
-        return self.is_ready()
-
-    def get_window(self) -> list[T]:
-        """Return a **copy** of the current window contents (oldest → newest).
-
-        Returns a plain ``list`` so callers are free to mutate it without
-        affecting the internal buffer.
+        Args:
+            max_size: 最大记录数。
+            max_duration_sec: 最大时间跨度（秒）。
+            timestamp_key: 每条记录中时间戳字段的键名。
         """
-        return list(self._buffer)
+        if max_size <= 0:
+            raise ValueError("max_size must be positive")
+        if max_duration_sec <= 0:
+            raise ValueError("max_duration_sec must be positive")
 
-    def get_window_as_deque(self) -> Deque[T]:
-        """Return a **shallow copy** of the internal deque.
+        self._max_size = max_size
+        self._max_duration_sec = max_duration_sec
+        self._timestamp_key = timestamp_key
+        self._deque: deque = deque()
+        self._lock = threading.Lock()
 
-        Faster than ``get_window()`` when you only need to iterate.
+    # ---- 属性 ----
+
+    @property
+    def max_size(self) -> int:
+        return self._max_size
+
+    @property
+    def max_duration_sec(self) -> float:
+        return self._max_duration_sec
+
+    @property
+    def timestamp_key(self) -> str:
+        return self._timestamp_key
+
+    # ---- 核心操作 ----
+
+    def append(self, record: Dict[str, Any]) -> None:
+        """添加一条记录，自动淘汰过期条目。
+
+        Args:
+            record: 记录字典，必须包含 timestamp_key 对应的键。
+
+        Raises:
+            KeyError: 记录缺少时间戳字段。
         """
-        return self._buffer.copy()
+        ts = record[self._timestamp_key]
+        with self._lock:
+            self._deque.append(record)
+            self._evict(ts)
 
-    def advance(self) -> None:
-        """Drop the oldest ``stride`` items, making room for new data.
+    def extend(self, records: List[Dict[str, Any]]) -> None:
+        """批量添加记录。"""
+        if not records:
+            return
+        with self._lock:
+            for rec in records:
+                self._deque.append(rec)
+            latest_ts = records[-1][self._timestamp_key]
+            self._evict(latest_ts)
 
-        After this call :meth:`is_ready` returns False until the buffer
-        fills up again.
+    def _evict(self, current_ts: float) -> None:
+        """淘汰超出约束的记录。"""
+        # 按时间淘汰
+        cutoff = current_ts - self._max_duration_sec
+        while self._deque and self._deque[0][self._timestamp_key] < cutoff:
+            self._deque.popleft()
 
-        Complexity: O(stride).
+        # 按大小淘汰
+        while len(self._deque) > self._max_size:
+            self._deque.popleft()
+
+    # ---- 查询 ----
+
+    def get_all(self) -> List[Dict[str, Any]]:
+        """返回窗口内所有记录的副本。"""
+        with self._lock:
+            return list(self._deque)
+
+    def get_count(self) -> int:
+        """返回当前记录数。"""
+        with self._lock:
+            return len(self._deque)
+
+    def get_duration(self) -> float:
+        """返回窗口内实际时间跨度（秒）。"""
+        with self._lock:
+            if len(self._deque) < 2:
+                return 0.0
+            return self._deque[-1][self._timestamp_key] - self._deque[0][self._timestamp_key]
+
+    def get_field_values(self, key: str) -> List[Any]:
+        """提取窗口内所有记录指定字段的值列表。"""
+        with self._lock:
+            return [rec.get(key) for rec in self._deque]
+
+    def aggregate(
+        self,
+        func: Callable[[List[Dict[str, Any]]], Any],
+    ) -> Any:
+        """对窗口内所有记录执行自定义聚合。
+
+        Args:
+            func: 聚合函数，接收记录列表，返回聚合结果。
         """
-        t0 = time.perf_counter_ns()
-        drop = min(self.stride, len(self._buffer))
-        for _ in range(drop):
-            self._buffer.popleft()
-        self._last_advance_time_ns = time.perf_counter_ns() - t0
+        with self._lock:
+            return func(list(self._deque))
 
-    def reset(self) -> None:
-        """Empty the buffer and reset counters."""
-        self._buffer.clear()
-        self._total_pushes = 0
-
-    # ------------------------------------------------------------------
-    # Properties
-    # ------------------------------------------------------------------
-
-    @property
-    def buffer(self) -> Deque[T]:
-        """Direct access to the internal deque (read-only intent)."""
-        return self._buffer
-
-    @property
-    def total_pushes(self) -> int:
-        """Total number of items ever pushed (monotonic)."""
-        return self._total_pushes
-
-    @property
-    def last_push_time_us(self) -> float:
-        """Duration of the most recent :meth:`push` in microseconds."""
-        return self._last_push_time_ns / 1000.0
-
-    @property
-    def last_advance_time_us(self) -> float:
-        """Duration of the most recent :meth:`advance` in microseconds."""
-        return self._last_advance_time_ns / 1000.0
-
-    # ------------------------------------------------------------------
-    # Magic methods
-    # ------------------------------------------------------------------
+    def clear(self) -> None:
+        """清空窗口。"""
+        with self._lock:
+            self._deque.clear()
 
     def __len__(self) -> int:
-        return len(self._buffer)
+        return self.get_count()
 
     def __repr__(self) -> str:
+        n = self.get_count()
+        dur = self.get_duration()
         return (
-            f"SlidingWindow(size={self.window_size}, stride={self.stride}, "
-            f"len={len(self._buffer)}, ready={self.is_ready()})"
+            f"SlidingWindow(size={n}/{self._max_size}, "
+            f"duration={dur:.1f}/{self._max_duration_sec:.0f}s)"
         )
 
-    def __iter__(self) -> Iterator[T]:
-        """Iterate over items in the window (oldest → newest)."""
-        return iter(self._buffer)
 
-    def __contains__(self, item: T) -> bool:
-        return item in self._buffer
+class TimedSlidingWindow(SlidingWindow):
+    """增强版滑动窗口：支持按固定周期触发回调（如每 60 秒输出一次聚合指标）。
 
-
-# ---------------------------------------------------------------------------
-# Streaming adapter — process a full sequence through the window
-# ---------------------------------------------------------------------------
-
-
-def stream_windows(
-    items: list[T],
-    window_size: int = DEFAULT_WINDOW_SIZE,
-    stride: int = DEFAULT_WINDOW_STRIDE,
-    *,
-    drop_partial: bool = False,
-) -> Iterator[list[T]]:
-    """Convenience generator: push an entire sequence through SlidingWindow.
-
-    Args:
-        items: Full list of items to process.
-        window_size: Frames per window.
-        stride: Frame advance between windows.
-        drop_partial: If True, skip the final window when it is shorter than
-                      *window_size*.  If False (default), yield all windows
-                      including a potentially shorter tail.
-
-    Yields:
-        List[T] for each complete window (and optionally the tail).
+    用于视频特征管线中实时输出窗口级特征。
     """
-    sw = SlidingWindow[T](window_size=window_size, stride=stride)
-    for item in items:
-        sw.push(item)
-        if sw.is_ready():
-            yield sw.get_window()
-            sw.advance()
 
-    # Tail window
-    if not drop_partial and len(sw._buffer) > 0:
-        yield sw.get_window()
+    def __init__(
+        self,
+        max_size: int = 300,
+        max_duration_sec: float = 300.0,
+        timestamp_key: str = "timestamp",
+        emit_interval_sec: float = 60.0,
+        on_emit: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
+    ) -> None:
+        super().__init__(max_size, max_duration_sec, timestamp_key)
+        self._emit_interval_sec = emit_interval_sec
+        self._on_emit = on_emit
+        self._last_emit_ts: Optional[float] = None
+
+    def append(self, record: Dict[str, Any]) -> None:
+        """添加记录，若到达 emit 周期则触发回调。"""
+        super().append(record)
+        ts = record[self._timestamp_key]
+
+        if self._last_emit_ts is None:
+            self._last_emit_ts = ts
+            return
+
+        if ts - self._last_emit_ts >= self._emit_interval_sec:
+            self._last_emit_ts = ts
+            if self._on_emit is not None:
+                self._on_emit(self.get_all())

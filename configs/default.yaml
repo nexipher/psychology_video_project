@@ -1,0 +1,70 @@
+# ============================================================
+# 同学A — 视频识别与大模型辅助判断 默认配置
+# ============================================================
+
+# --- 数据路径 ---
+data:
+  # Toyota Smarthome 数据集根目录
+  toyota_smarthome_root: "/dataset/Toyota_Smarthome"
+  trimmed_rgb: "/dataset/Toyota_Smarthome/trimmed/rgb"
+  trimmed_skeleton: "/dataset/Toyota_Smarthome/trimmed/skeleton_v1.2"
+  untrimmed_rgb: "/dataset/Toyota_Smarthome/untrimmed/rgb"
+  untrimmed_annotation: "/dataset/Toyota_Smarthome/untrimmed/annotations"
+
+# --- 模型路径 ---
+models:
+  yolo_pose: "yolov8n-pose.pt"       # YOLOv8-Pose 权重（nano 版本用于端侧）
+  qwen_vl: "Qwen/Qwen2.5-VL-7B-Instruct"
+
+# --- 视频流 ---
+video:
+  default_fps: 30
+  target_fps: 15                     # 推理降采样到 15fps 降低算力消耗
+  frame_width: 640
+  frame_height: 480
+
+# --- 滑动窗口 ---
+sliding_window:
+  window_size_sec: 300               # 5 分钟窗口
+  stride_sec: 60                     # 1 分钟步长
+  max_history_windows: 288           # 保留最近 288 个窗口（24 小时）
+
+# --- 夜间时段定义 ---
+night:
+  start_hour: 22                     # 22:00
+  end_hour: 6                        # 06:00
+
+# --- 行为检测阈值 ---
+thresholds:
+  sedentary:
+    max_displacement_px: 50          # 质心位移阈值（像素），低于此值视为静止
+    min_duration_sec: 300            # 持续静止 ≥5 分钟开始累计久坐
+    prolonged_warning_sec: 7200      # 连续久坐 ≥2 小时触发警示
+
+  wandering:
+    grid_resolution: 50              # 空间网格分辨率（像素）
+    min_path_repetition: 3           # 同一路径重复 ≥3 次标记徘徊
+    short_window_sec: 600            # 短时间窗口（10 分钟）
+
+  inactivity:
+    min_still_sec: 1800              # 连续静止 30 分钟标记异常久坐
+
+  social:
+    max_interaction_distance_px: 200 # 判定社交互动的最大人体间距（像素）
+    min_co_present_sec: 60           # 最小共现时间
+
+  circadian:
+    baseline_window_days: 7          # 个体基线计算窗口（天）
+    offset_warning_hours: 2          # 偏移超过 2 小时触发警示
+
+# --- MLLM 采样 ---
+mllm:
+  trigger_pre_sec: 5                 # 事件触发前采样秒数
+  trigger_post_sec: 10               # 事件触发后采样秒数
+  num_frames: 16                     # 均匀采样帧数
+  max_retries: 2                     # JSON 解析失败最大重试次数
+
+# --- 日志 ---
+logging:
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
