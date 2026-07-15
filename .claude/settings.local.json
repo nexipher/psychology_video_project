@@ -8,7 +8,9 @@
       "Bash(python *)",
       "Bash(pip install *)",
       "Bash(python3 *)",
-      "Bash(pip show *)"
+      "Bash(pip show *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }
