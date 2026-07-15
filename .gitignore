@@ -1,0 +1,58 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Model weights and large binaries
+*.pt
+*.pth
+*.onnx
+*.bin
+*.safetensors
+*.h5
+*.pb
+*.ckpt
+*.pkl
+
+# Dataset archives (too large, use dataset/README or external storage)
+dataset/*.zip
+dataset/*.tar.gz
+dataset/*.tar
+!dataset/.gitkeep
+
+# Environment
+.env
+.env.local
+
+# Logs
+*.log

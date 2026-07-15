@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pip3 install *)",
+      "Bash(unzip -l /root/autodl-tmp/psychology_video_project/dataset/toyota_smarthome_skeleton_v1.2.zip)",
+      "Bash(tar tzf *)",
+      "Bash(tar xzf *)",
+      "Bash(python *)",
+      "Bash(pip install *)",
+      "Bash(python3 *)"
+    ]
+  }
+}
