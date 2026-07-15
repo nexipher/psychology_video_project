@@ -78,5 +78,34 @@
   - IOU 计算：与预期值 0.143 一致
 * **置信度或遗留待办（TODO）**：
   - Real 模式的 YOLO 推理待 GPU 审批后验证（需安装 ultralytics）
-  - numpy 2.2.6 与 torch 2.1.2 存在兼容性警告（_ARRAY_API），在无 GPU mock 模式下不影响使用
+  - numpy 2.2.6 与 torch 2.1.2 兼容性问题已通过降级 numpy 到 1.26.4 解决
+  - ultralytics 8.4.95 + scipy 已安装就绪
+
+---
+
+### [2026-07-15] - Batch 4：特征提取器 + 日级聚合器
+
+* **当前操作动作**：创建 VideoFeatureExtractor 和 DailyAggregator，实现 A1 核心 6 项指标
+* **核心变更说明**：
+  1. 创建 `feature_extractor.py`：
+     - `VideoFeatureExtractor` 消费标准化关键点帧数据，通过滑动窗口计算 6 项指标
+     - 支持 activity_minutes / sedentary_ratio / room_transitions / movement_velocity / night_activity / multi_person_duration
+     - 网格化空间建图检测房间切换，髋部中点计算质心位移和速度
+     - 窗口历史自动保留用于日级聚合
+     - `_CumulativeMetrics` 作为窗口不足时的回退累计器
+  2. 创建 `aggregator.py`：
+     - `DailyAggregator` 收集窗口指标，聚合输出严格符合 §6.1 JSON Schema
+     - 内置 Schema 自动校验和修复（缺失字段填充、范围约束）
+     - 支持多日范围聚合 `aggregate_range()`
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/feature_extractor.py` (Created)
+  - `src/video_analysis/aggregator.py` (Created)
+* **执行结果与验证状态**：
+  - 300 帧单人行走模拟：输出 2 个窗口，Schema 校验通过
+  - 150 帧多人场景：多人共现正确检测
+  - 空数据边界：Schema 校验通过（全零输出）
+  - 日级输出所有 9 个字段齐全且类型正确
+* **置信度或遗留待办（TODO）**：
+  - sedentary 判定阈值（per-frame 50px）需用真实数据校准，当前单帧位移太小导致过度判定为静止
+  - 夜间时段基于虚拟时钟（elapsed_sec），实际部署需接入真实时钟或视频元数据时间戳
 ---
