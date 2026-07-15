@@ -51,4 +51,32 @@
 * **置信度或遗留待办（TODO）**：
   - CameraStream 和 RTSPStream 需在实际设备上验证
   - SkeletonLoader 的实际 V1.2 格式兼容性需待 `/dataset/` 挂载后验证
+
+---
+
+### [2026-07-15] - Batch 3：姿态推理与多目标跟踪封装
+
+* **当前操作动作**：创建 YOLOv8-Pose 推理封装和 ByteTrack 风格多目标跟踪器
+* **核心变更说明**：
+  1. 创建 `pose_estimator.py`：
+     - `PoseEstimator` 类支持 mock/real 双模式
+     - Mock 模式：基于 COCO 17 点人体模板 + 正弦运动生成模拟关键点，模拟 1-3 人
+     - Real 模式：封装 ultralytics YOLO 模型，需 `approve_gpu=True` 审批后才加载
+     - 输出标准化 `{keypoints: (N,17,3), bboxes: (N,4), confidences: (N,)}`
+  2. 创建 `tracker.py`：
+     - `TrackState`：匀速运动预测 + 指数平滑更新的单个目标状态
+     - `MultiObjectTracker`：ByteTrack 风格的 IOU 匹配 + 二次匹配（高分/低分检测分离）
+     - 纯 numpy 实现，支持 scipy 匈牙利算法或贪心回退
+     - 支持 track 确认/丢失/删除生命周期管理
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/pose_estimator.py` (Created)
+  - `src/video_analysis/tracker.py` (Created)
+* **执行结果与验证状态**：
+  - Mock 推理：正确生成 (1,17,3) 关键点 + 检测框
+  - 单目标跟踪：10 帧后 track 确认，坐标平滑正确
+  - 多目标跟踪：2 人 15 帧，track ID 稳定保持
+  - IOU 计算：与预期值 0.143 一致
+* **置信度或遗留待办（TODO）**：
+  - Real 模式的 YOLO 推理待 GPU 审批后验证（需安装 ultralytics）
+  - numpy 2.2.6 与 torch 2.1.2 存在兼容性警告（_ARRAY_API），在无 GPU mock 模式下不影响使用
 ---
