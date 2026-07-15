@@ -44,10 +44,11 @@ htmlcov/
 *.ckpt
 *.pkl
 
-# Dataset archives (too large, use dataset/README or external storage)
+# Dataset (too large, use external storage)
 dataset/*.zip
 dataset/*.tar.gz
 dataset/*.tar
+dataset/Videos_mp4/
 !dataset/.gitkeep
 
 # Environment
