@@ -108,4 +108,39 @@
 * **置信度或遗留待办（TODO）**：
   - sedentary 判定阈值（per-frame 50px）需用真实数据校准，当前单帧位移太小导致过度判定为静止
   - 夜间时段基于虚拟时钟（elapsed_sec），实际部署需接入真实时钟或视频元数据时间戳
+
+---
+
+### [2026-07-15] - Batch 5：A1 单元测试 + 全链路集成测试
+
+* **当前操作动作**：编写 10 个测试文件，覆盖 A1 所有模块 + 全链路集成
+* **核心变更说明**：
+  1. 创建 `tests/conftest.py`：共享 fixtures（合成骨骼数据、合成视频、Mock PoseEstimator、PerFrameData 生成器）
+  2. 创建 9 个测试文件，覆盖 a1.1–a1.10 全部子任务
+  3. 全链路集成测试 `test_pipeline.py`：3 条独立管道路径
+     - 单人模拟视频 → Mock 推理 → 跟踪 → 特征提取 → 聚合 → Schema 校验
+     - 多人模拟场景全链路
+     - Skeleton JSON 验证模式全链路
+* **测试文件清单**：
+  - `tests/conftest.py` (Created)
+  - `tests/test_sliding_window.py` (Created) — 14 tests
+  - `tests/test_skeleton_parser.py` (Created) — 12 tests
+  - `tests/test_schema_validator.py` (Created) — 12 tests
+  - `tests/test_video_stream.py` (Created) — 7 tests
+  - `tests/test_data_loader.py` (Created) — 12 tests
+  - `tests/test_pose_estimator.py` (Created) — 11 tests
+  - `tests/test_tracker.py` (Created) — 18 tests
+  - `tests/test_feature_extractor.py` (Created) — 8 tests
+  - `tests/test_aggregator.py` (Created) — 6 tests
+  - `tests/test_pipeline.py` (Created) — 3 tests
+* **执行结果与验证状态**：**104 passed, 0 failed**，耗时 57s，全部在 CPU/Mock 模式下运行
+* **A1 总结**：
+  - 全部 A1.1–A1.10 子任务完成，产出 15 个源文件 + 11 个测试文件
+  - Skeleton 验证模式 + RGB 视频生产模式均已跑通
+  - 日级输出严格符合 §6.1 JSON Schema
+  - 全链路 Pipeline 可在 CPU 模式完整运行
+* **置信度或遗留待办（TODO）**：
+  - GPU 模式待用户开启后验证 YOLO 真实推理
+  - 静止判定阈值需在实际数据上校准（Skeleton V1.2 Ground Truth）
+  - `/dataset/` 未挂载，Skeleton V1.2 真实格式兼容性待验证
 ---
