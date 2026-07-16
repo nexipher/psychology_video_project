@@ -157,6 +157,48 @@ ightarrow$ 触发中高风险预警）。
 }
 ```
 
+### 6.1.1 A2 专项行为检测扩展字段（`a2_special_behavior`）
+
+以下字段由 `SpecialBehaviorDetector`（A2 模块）产出，作为 `daily_metrics` 的补充，附加在输出 JSON 的 `a2_special_behavior` 键下：
+
+```json
+{
+  "a2_special_behavior": {
+    "daily_repetitive_path_count": "INT (次/日)",
+    "daily_hotspot_action_count": "INT (次/日)",
+    "daily_prolonged_inactive_count": "INT (次/日)",
+    "max_inactive_stretch_sec": "FLOAT (秒)",
+    "daily_avg_social_intensity": "FLOAT (0-1)",
+    "circadian": {
+      "date": "YYYY-MM-DD",
+      "wake_time": "FLOAT (起床时间，小时)",
+      "sleep_time": "FLOAT (入睡时间，小时)",
+      "nap_duration_minutes": "FLOAT (午休时长，分钟)",
+      "baseline_wake_mean": "FLOAT (基线平均起床时间)",
+      "baseline_sleep_mean": "FLOAT (基线平均入睡时间)",
+      "wake_offset_hours": "FLOAT (起床时间偏移，小时)",
+      "sleep_offset_hours": "FLOAT (入睡时间偏移，小时)",
+      "is_circadian_disturbed": "BOOL (节律是否异常)",
+      "baseline_days_count": "INT (基线天数)",
+      "confidence_score": "FLOAT (0-1)"
+    }
+  }
+}
+```
+
+| 字段 | 来源检测器 | 含义 |
+|:---|:---|:---|
+| `daily_repetitive_path_count` | `RepetitivePathDetector` | 当日检测到的重复路径/无目的徘徊事件次数。路径重合度超过 40% 阈值时触发 |
+| `daily_hotspot_action_count` | `RepeatedActionDetector` | 当日检测到的反复进出同一区域的热点动作次数。进出频次超过阈值（默认 4 次）时触发 |
+| `daily_prolonged_inactive_count` | `ProlongedInactivityDetector` | 当日异常久坐/久卧事件次数。连续静止超过 2 小时触发，1 小时预警告。附带骨骼关键点微动分析 |
+| `max_inactive_stretch_sec` | `ProlongedInactivityDetector` | 当日最长连续静止时长（秒）。用于评估最严重的一次久坐事件 |
+| `daily_avg_social_intensity` | `SocialInteractionAnalyzer` | 当日社交互动强度均值 (0-1)。综合多人共现比例、空间距离、面对面朝向角度加权计算 |
+| `circadian` | `CircadianRhythmAnalyzer` | 昼夜节律分析结果。对比个体多日基线，计算起床/入睡时间偏移量。偏移超过 2 小时标记 `is_circadian_disturbed: true` |
+
+> **注意**：`daily_metrics.repetitive_path_count` 由 A1 硬编码值改为从 `a2_special_behavior.daily_repetitive_path_count` 回填，确保 §6.1 Schema 保持兼容。
+
+---
+
 ### 6.2 Qwen2.5-VL-7B 事件复核输出 JSON Schema（大模型返回约束）
 ```json
 {
