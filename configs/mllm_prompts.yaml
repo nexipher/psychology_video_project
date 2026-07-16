@@ -28,6 +28,7 @@ long_inactivity:
 
     ## 输出格式
     你必须严格返回以下 JSON 格式，不要输出任何其他内容，不要用 markdown 代码块包装：
+    **注意：event_type 必须固定填写 "long_inactivity"，不能填其他值。**
 
     {
       "event_type": "long_inactivity",
@@ -43,6 +44,7 @@ long_inactivity:
     }
 
     ## 字段说明
+    - event_type: **必须填 "long_inactivity"**，不能填其他值
     - observable_evidence: 一句话描述你看到的画面证据
     - analytical_summary: 一句话分析总结，格式为"老人出现[现象]，疑似[结论]，需要关注"。禁止诊断性结论（如抑郁、焦虑症等），只客观描述行为
     - activity_state: 选 "active" / "sedentary" / "uncertain"
@@ -80,11 +82,11 @@ social_interaction:
     你只能基于画面中可见的客观事实进行描述和判断。你不具备执法或身份鉴定能力。
 
     ## 任务
-    画面中出现多人。请判断当前的社交场景属于以下哪种类型：
-    - "family_interaction": 与家人/熟人的正常互动（交谈、一起吃饭、一起看电视等放松的社交状态）
-    - "stranger_interaction": 与疑似陌生人/上门推销者的互动（人物表现出拘谨、对方在展示文件/产品、老人表现出困惑或被动等特征）
-    - "watching_tv_alone": 虽然画面中多人但实际是独自在看电视（各人注意力在电视上，彼此无交流）
-    - "uncertain": 画面信息不足以判断
+    画面中出现多人。请判断老人当前的社交状态：
+    - 如果是与家人/熟人正常互动（交谈、吃饭、一起看电视等放松状态），在 evidence 中描述互动细节
+    - 如果是与疑似陌生人/上门推销者互动（拘谨、对方展示文件/产品、老人困惑被动），在 evidence 中描述可疑迹象
+    - 如果多人共处但无交流（各看各的电视、各做各的事），在 evidence 中说明无互动
+    - 如果不确定，标注 evidence_sufficient: false
 
     ## 判断依据
     - 观察人物之间的距离、身体朝向、手势和表情
@@ -93,11 +95,12 @@ social_interaction:
     - 多人之间是否有眼神接触、对话交流
 
     ## 输出格式
-    严格返回以下 JSON，不要输出其他内容，不要用 markdown 包装：
+    严格返回以下 JSON，不要输出其他内容，不要用 markdown 包装。
+    **注意：event_type 必须固定填写 "social_interaction"，不能填其他值。**
 
     {
       "event_type": "social_interaction",
-      "observable_evidence": "只描述画面可见事实，如：两人面对面坐在餐桌两侧、正在交谈、桌上有文件",
+      "observable_evidence": "只描述画面可见事实，如：两人面对面坐在餐桌两侧、正在交谈、桌上有文件。并在evidence中写明社交子类型（家人互动/陌生人接触/独自看电视等）",
       "analytical_summary": "老人出现[现象]，疑似[结论]，需要关注",
       "start_sec": 0,
       "end_sec": 0,
@@ -109,8 +112,9 @@ social_interaction:
     }
 
     ## 字段说明
+    - event_type: **必须填 "social_interaction"**，不能填其他值（如 family_interaction、stranger_interaction 等）
     - social_context: 选 "alone" / "co_present" / "interacting" / "uncertain"
-    - observable_evidence: 描述人物关系、物品、氛围的证据
+    - observable_evidence: 描述人物关系、物品、氛围的证据，可在文中写明社交子类型（如"与家人正常交谈"或"疑似陌生人推销"）
     - analytical_summary: 一句话分析总结，格式为"老人出现[现象]，疑似[结论]，需要关注"。禁止诊断性结论
 
   few_shot:
@@ -155,6 +159,7 @@ repetitive_behavior:
 
     ## 输出格式
     严格返回以下 JSON，不要输出其他内容，不要用 markdown 包装：
+    **注意：event_type 必须固定填写 "repetitive_behavior"，不能填其他值。**
 
     {
       "event_type": "repetitive_behavior",
@@ -170,6 +175,7 @@ repetitive_behavior:
     }
 
     ## 字段说明
+    - event_type: **必须填 "repetitive_behavior"**，不能填其他值（如 anxious_wandering、compulsive_searching 等）
     - repetition_type: 选 "same_route" / "repeated_search" / "none" / "uncertain"
     - observable_evidence: 描述重复行为的具体表现
     - analytical_summary: 一句话分析总结，格式为"老人出现[现象]，疑似[结论]，需要关注"。禁止诊断性结论

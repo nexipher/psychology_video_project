@@ -441,4 +441,29 @@
 * **执行结果与验证状态**：40/40 相关测试通过；全流程跑通，analytical_summary 正常输出
 * **置信度或遗留待办（TODO）**：
   - Qwen2.5-VL 两次推理语义一致（焦虑相关），但措辞不完全相同（模型本身非确定性输出）
+
+---
+
+### [2026-07-16] - 修复：social_interaction Prompt event_type 冲突 + P10T07C04 全流程测试
+
+* **当前操作动作**：修复 Qwen2.5-VL 输出 event_type=family_interaction 违反 §6.2 Schema 的 Bug，在 P10T07C04 上验证
+* **核心变更说明**：
+  1. **Bug 复现**（P10T07C04 第一次运行）：
+     - social_interaction 触发时，Qwen2.5-VL 输出 `event_type: "family_interaction"`（Prompt 任务列表中的子类型标签）
+     - §6.2 Schema 要求 `enum: ["long_inactivity", "social_interaction", "repetitive_behavior"]`
+     - Schema 校验拒绝 → 降级到 safe_default（evidence: "MLLM output could not be parsed"）
+  2. **根因**：Prompt 的 Task 部分列出了子分类标签（family_interaction / stranger_interaction / watching_tv_alone），模型倾向于将 task label 填入 `event_type`，忽略了输出格式中的固定值 `"social_interaction"`
+  3. **修复**（`mllm_prompts.yaml`，三个 Prompt 统一加固）：
+     - social_interaction：去掉 Task 中的子类型标签，改为自然语言描述；在 Output Format 和字段说明中两次强调 **event_type 必须填固定值**
+     - long_inactivity / repetitive_behavior：同样加入 event_type 固定值警告，防止同类问题
+  4. **P10T07C04 验证结果**：
+     - social_interaction ✅ 通过：`event_type: "social_interaction"`, `social_context: "alone"`，`evidence_sufficient: true`
+     - repetitive_behavior ✅ 通过
+     - **交叉验证价值**：A2 CV 模型判 social_intensity=0.324（触发社交检测），但 MLLM 看到画面中只有一人独自活动 → A4 降级依据
+* **涉及/修改的文件清单**：
+  - `configs/mllm_prompts.yaml` (Modified — 3 prompts +event_type 固定值警告)
+* **执行结果与验证状态**：28/28 MLLM 测试通过；P10T07C04 两次 MLLM 复核均通过 Schema 校验
+* **置信度或遗留待办（TODO）**：
+  - P10T07C04 的 repetitive_behavior evidence 描述与 same_route 标签不完全匹配（说"起身坐下"而非"来回走动"），可能是 16 帧采样不足以捕获完整行为周期
+  - 两个视频的 A1 指标仍存在不同程度噪声，后续需要对 A1 特征提取算法进行系统性调参
 ---
