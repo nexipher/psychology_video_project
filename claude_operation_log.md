@@ -283,4 +283,29 @@
   - social_interaction 仍为 4.84 min（单人视频，YOLO 假阳性需进一步排查）
   - 坐姿判定阈值（still_ratio=0.6）可能需要根据更多视频标定
   - 需在 10 视频全量测试后确定最优阈值
+
+---
+
+### [2026-07-16] - A3 Batch 1：MLLM Prompt 模板 + Qwen2.5-VL 复核引擎核心
+
+* **当前操作动作**：创建 `configs/mllm_prompts.yaml` 和 `src/video_analysis/mllm_verifier.py`
+* **核心变更说明**：
+  1. `configs/mllm_prompts.yaml`：三套封闭标签 System Prompt（§6.2 JSON Schema 强制输出）
+     - **long_inactivity**：区分 engaged_sedentary（看书/做手工）vs passive_sedentary（呆坐/打盹）
+     - **social_interaction**：区分 family_interaction（家人）vs stranger_interaction（陌生人/推销）vs watching_tv_alone
+     - **repetitive_behavior**：区分 purposeful_repetition（有目的）vs anxious_wandering（焦虑徘徊）vs compulsive_searching（强迫翻找）
+     - 每套附带 2 个 Few-Shot 示例、法律约束（禁止医学诊断）
+  2. `src/video_analysis/mllm_verifier.py`：
+     - `MLLMVerifier` 类：Mock/Real 双模式（GPU 审批同 A1）
+     - `verify(video_path, event_type, trigger_ts)` → 采样 16 帧 → 推理 → JSON 解析 → 重试(×2) → §6.2 校验
+     - 失败兜底：`safe_default()` 返回 `evidence_sufficient: false`
+     - `verify_batch()` 批量复核接口
+* **涉及/修改的文件清单**：
+  - `configs/mllm_prompts.yaml` (Created, 3 prompts + 6 few-shot examples)
+  - `src/video_analysis/mllm_verifier.py` (Created, ~280 lines)
+* **执行结果与验证状态**：Mock 模式三种 event_type 全通，§6.2 Schema 校验通过。137/137 测试通过。
+* **置信度或遗留待办（TODO）**：
+  - Real 模式需 GPU 审批后加载 Qwen2.5-VL-7B（预计 ~14GB 显存）
+  - Few-Shot 示例需用 Toyota Smarthome Trimmed RGB 真实数据替换占位路径
+  - A3 Batch 2 待实现：事件触发集成 + Mock 单元测试
 ---
