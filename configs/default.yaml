@@ -4,12 +4,19 @@
 
 # --- 数据路径 ---
 data:
-  # Toyota Smarthome 数据集根目录
-  toyota_smarthome_root: "/dataset/Toyota_Smarthome"
-  trimmed_rgb: "/dataset/Toyota_Smarthome/trimmed/rgb"
-  trimmed_skeleton: "/dataset/Toyota_Smarthome/trimmed/skeleton_v1.2"
-  untrimmed_rgb: "/dataset/Toyota_Smarthome/untrimmed/rgb"
-  untrimmed_annotation: "/dataset/Toyota_Smarthome/untrimmed/annotations"
+  # 全流程测试视频目录（项目内 dataset/）
+  videos_mp4: "dataset/Videos_mp4"
+  doubao: "dataset/doubao"
+  # Toyota Smarthome 数据集（压缩包，暂不解压）
+  toyota_smarthome_root: "dataset/Toyota_Smarthome"
+  trimmed_rgb: "dataset/Toyota_Smarthome/trimmed/rgb"
+  trimmed_skeleton: "dataset/Toyota_Smarthome/trimmed/skeleton_v1.2"
+  untrimmed_rgb: "dataset/Toyota_Smarthome/untrimmed/rgb"
+  untrimmed_annotation: "dataset/Toyota_Smarthome/untrimmed/annotations"
+  # 压缩包路径
+  archive_mp4: "dataset/toyota_smarthome_mp4.tar.gz"
+  archive_skeleton: "dataset/toyota_smarthome_skeleton_v1.2.zip"
+  archive_annotation: "dataset/Annotation_v1.0.tar.gz"
 
 # --- 模型路径 ---
 models:

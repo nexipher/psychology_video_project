@@ -26,7 +26,12 @@
       "Read(//tmp/**)",
       "Bash(pip list *)",
       "Bash(grep -v \"Downloading\\\\|libgomp\\\\|^\\\\s*$\")",
-      "Bash(grep -v \"libgomp\\\\|^\\\\s*$\")"
+      "Bash(grep -v \"libgomp\\\\|^\\\\s*$\")",
+      "Read(//dataset/**)",
+      "Read(//dataset/Toyota_Smarthome/**)",
+      "Bash(find / -maxdepth 3 -name \"Videos_mp4\" -type d)",
+      "Read(//mnt/**)",
+      "Bash(ls /data/)"
     ]
   }
 }
