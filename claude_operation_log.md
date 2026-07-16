@@ -333,4 +333,32 @@
 * **置信度或遗留待办（TODO）**：
   - 事件触发目前扫描日级汇总，实际部署应改为实时事件驱动
   - A3 Batch 3 待实现：GPU 实机加载 Qwen2.5-VL-7B 验证三种复核任务
+
+---
+
+### [2026-07-16] - 环境问题记录：PyTorch 版本过低，无法加载 Qwen2.5-VL
+
+* **当前操作动作**：诊断环境兼容性问题，记录为换环境做准备
+* **核心变更说明**：
+  1. **问题链**：
+     - 当前 PyTorch 2.1.2 + CUDA 11.8（AutoDL 默认镜像）
+     - transformers 4.46.0 仅有 `Qwen2VLForConditionalGeneration`，无 `Qwen2_5_VLForConditionalGeneration`
+     - transformers 4.48+ 需要 PyTorch >= 2.3（`register_pytree_node` 接口变更）
+     - transformers 5.x 需要 PyTorch >= 2.4
+     - 升级 PyTorch 到 2.5 可能破坏 ultralytics + numpy 现有兼容需要重测
+  2. **推荐新环境**：
+     - **PyTorch 2.5.1 + CUDA 12.1 + Python 3.10**（推荐方案）
+     - 备选：PyTorch 2.4.1 + CUDA 11.8
+     - numpy >= 1.26（PyTorch 2.5 原生支持 numpy 2.x）
+     - transformers >= 4.48（含 `Qwen2_5_VLForConditionalGeneration`）
+  3. **新环境启动后需验证**：
+     - 165 测试全量通过（ultralytics、numpy、scipy 兼容性）
+     - `from transformers import Qwen2_5_VLForConditionalGeneration` 可用
+     - GPU 可用（RTX 4090 或更高）
+* **涉及/修改的文件清单**：
+  - `claude_operation_log.md` (环境备注)
+* **执行结果与验证状态**：A3 Batch 1+2 代码已就绪，Mock 测试通过。Real 模式代码已写好但被 PyTorch 版本阻塞。
+* **置信度或遗留待办（TODO）**：
+  - 换环境后立即执行 A3 Batch 3：GPU 加载 Qwen2.5-VL-7B，三种 event_type 各验证一次
+  - P14T14C06 作为测试视频
 ---
