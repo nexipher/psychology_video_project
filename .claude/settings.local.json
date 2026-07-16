@@ -11,7 +11,21 @@
       "Bash(pip show *)",
       "Bash(git commit *)",
       "Bash(git push *)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(GIT_SSL_NO_VERIFY=1 git push *)",
+      "Bash(ls /dataset/)",
+      "Bash(find /dataset -name \"*.mp4\" -o -name \"*.avi\" -o -name \"*.mkv\")",
+      "Bash(find / -maxdepth 3 -name \"dataset\" -type d)",
+      "Bash(find / -maxdepth 4 -name \"P12T05C05*\")",
+      "Read(//root/autodl-tmp/**)",
+      "Bash(lsblk)",
+      "Bash(mount)",
+      "Read(//root/**)",
+      "Read(//autodl-pub/**)",
+      "Bash(cp /root/autodl-tmp/psychology_video_project/dataset/Videos_mp4/P12T05C05.mp4 /tmp/P12T05C05.mp4)",
+      "Read(//tmp/**)",
+      "Bash(pip list *)",
+      "Bash(grep -v \"Downloading\\\\|libgomp\\\\|^\\\\s*$\")"
     ]
   }
 }
