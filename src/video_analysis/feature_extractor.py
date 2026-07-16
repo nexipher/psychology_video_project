@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -82,6 +83,9 @@ class VideoFeatureExtractor:
         self._track_active: Dict[int, bool] = {}
         self._sedentary_history_sec = 1.0  # 累计 1 秒位移来判断
         self._sedentary_history_frames = max(1, int(fps * self._sedentary_history_sec))
+        # 长时间静止追踪：过去 30 秒内 > 80% 帧静止 → 坐姿
+        self._still_history: deque = deque(maxlen=int(30.0 * fps))  # bool per frame
+        self._sedentary_still_ratio = 0.6  # 过去 30s 内 60% 帧静止 → 坐姿
         self._grid_resolution = grid_resolution * 4  # 200px grid, 减少抖动误报
 
         # 工具
@@ -202,37 +206,29 @@ class VideoFeatureExtractor:
             elif self._last_grid_cell is None:
                 self._last_grid_cell = grid_cell
 
-            # ★ 坐姿检测：下半身遮挡 + 位移极小 → 坐着（桌子遮挡场景）
-            lower_visible = 0  # 髋(11,12) 膝(13,14) 踝(15,16)
-            upper_visible = 0  # 鼻(0) 眼(1,2) 耳(3,4) 肩(5,6)
-            for i in range(N):
-                for kp_idx in range(11, 17):
-                    if keypoints[i, kp_idx, 2] > 0.3:
-                        lower_visible += 1
-                for kp_idx in range(0, 7):
-                    if keypoints[i, kp_idx, 2] > 0.3:
-                        upper_visible += 1
+            # ★ 坐姿检测：过去 30 秒内 > 80% 帧静止 → 坐姿
+            # 换姿势的短暂移动不会破坏整体静止判定
+            is_still_frame = max_disp < 5.0
+            self._still_history.append(is_still_frame)
+            still_ratio = (
+                sum(self._still_history) / len(self._still_history)
+                if self._still_history else 0.0
+            )
+            # 久坐：过去 30 秒内 > 60% 帧静止 → 判定坐姿
+            # 不再依赖 max_disp 绝对值（换姿势也会有较大位移）
+            is_truly_sedentary = (
+                len(self._still_history) >= self._sedentary_history_frames
+                and still_ratio >= self._sedentary_still_ratio
+            )
+            is_standing = not is_truly_sedentary
 
-            # 下半身严重遮挡 + 上半身清晰 + 几乎不动 → 判定为坐姿
-            is_behind_occlusion = (lower_visible <= 2) and (upper_visible >= 3)
-            is_still = max_disp < 5.0  # 1 秒内质心位移 < 5px
-
-            if is_behind_occlusion and is_still:
-                is_standing = False
-            elif is_behind_occlusion and not is_still:
-                # 有遮挡但仍在移动 → 可能在桌子后站着活动
-                is_standing = True
-            else:
-                # 下半身可见：用姿态高度法
-                pose_heights = []
-                for i in range(N):
-                    height = self._compute_pose_height(keypoints[i])
-                    if height > 0:
-                        pose_heights.append(height)
-                avg_pose_height = float(np.mean(pose_heights)) if pose_heights else 0.0
-                is_standing = avg_pose_height > self._image_height * 0.15
-
-            is_truly_sedentary = (max_disp < self._sedentary_max_displacement_px) and not is_standing
+            # 关键点可见性（记录用）
+            lower_visible = sum(
+                1 for i in range(N) for k in range(11, 17) if keypoints[i, k, 2] > 0.3
+            )
+            upper_visible = sum(
+                1 for i in range(N) for k in range(0, 7) if keypoints[i, k, 2] > 0.3
+            )
 
             frame_features.update({
                 "centroid_x": float(mean_centroid[0]) if not np.isnan(mean_centroid[0]) else None,
@@ -255,7 +251,7 @@ class VideoFeatureExtractor:
                 "lower_visible": 0,
                 "upper_visible": 0,
                 "is_standing": False,
-                "is_sedentary": True,  # 无人时视为静止
+                "is_sedentary": True,
                 "room_transition": False,
                 "grid_cell": None,
             })
@@ -557,6 +553,8 @@ class VideoFeatureExtractor:
         self._frame_count = 0
         self._elapsed_sec = 0.0
         self._prev_centroids.clear()
+        self._track_positions.clear()
+        self._still_history.clear()
         self._last_grid_cell = None
         self._night_activity_count = 0
         self._total_valid_frames = 0

@@ -70,27 +70,22 @@ def _compute_pose_height(kps: np.ndarray) -> float:
     return 0.0
 
 
-def _compute_is_sedentary(keypoints: np.ndarray, max_displacement: float = 0.0) -> bool:
-    """判断当前帧是否静止/久坐。下半身遮挡+位移小→坐姿。无人→静止。"""
+def _compute_is_sedentary(keypoints: np.ndarray, still_streak: int = 0) -> bool:
+    """判断当前帧是否静止/久坐。无人→静止。连续静止>30s→坐姿。"""
     N = keypoints.shape[0]
     if N == 0:
         return True
-    is_standing = False
+    # 连续静止帧数超过 30 秒 → 大概率坐着
+    if still_streak >= 450:
+        return True
+    # 否则用姿态高度法：下身可见时可用
+    heights = []
     for i in range(N):
-        lower_vis = sum(1 for k in range(11, 17) if keypoints[i, k, 2] > 0.3)
-        upper_vis = sum(1 for k in range(0, 7) if keypoints[i, k, 2] > 0.3)
-        is_behind = (lower_vis <= 2) and (upper_vis >= 3)
-        is_still = max_displacement < 5.0
-        if is_behind and is_still:
-            is_standing = False
-        elif is_behind and not is_still:
-            is_standing = True
-        else:
-            h = _compute_pose_height(keypoints[i])
-            is_standing = h > 72
-        if is_standing:
-            break  # 只要有一个人站姿，整体就不算静止
-    return not is_standing
+        h = _compute_pose_height(keypoints[i])
+        if h > 0:
+            heights.append(h)
+    avg_h = float(np.mean(heights)) if heights else 0.0
+    return avg_h <= 72  # 姿态高度不足 → 坐/卧
 
 
 def main():
@@ -131,6 +126,7 @@ def main():
     multi_person_min_frames = 15      # 第二人需连续存在 ≥15 帧
     multi_person_min_bbox_size = 40   # 检测框最小边长（像素）
     multi_person_streak = 0
+    still_streak = 0                  # 连续静止帧计数器
 
     print(f"源帧率: {stream.native_fps:.1f} → 目标帧率: {stream.target_fps:.1f}")
     print(f"预计处理帧数: {stream.get_frame_count()}")
@@ -219,13 +215,18 @@ def main():
 
             # Step 5: A2 专项行为检测
             centroid = _compute_centroid(agg_kps)
-            # 估算质心位移（简单帧间距离，用于遮挡场景下的静止判断）
-            disp = 0.0
-            if centroid is not None and behavior._frame_count > 0:
-                if hasattr(behavior, '_last_centroid') and behavior._last_centroid is not None:
-                    disp = np.linalg.norm(np.array(centroid) - np.array(behavior._last_centroid)) * 15.0
+            # 追踪连续静止帧数（帧间位移 < 5px 视为静止）
+            still_this_frame = False
+            if centroid is not None and hasattr(behavior, '_last_centroid') and behavior._last_centroid is not None:
+                disp = np.linalg.norm(np.array(centroid) - np.array(behavior._last_centroid))
+                still_this_frame = disp < 5.0
+            if centroid is not None:
                 behavior._last_centroid = centroid
-            is_sed = _compute_is_sedentary(agg_kps, max_displacement=disp)
+            if still_this_frame:
+                still_streak += 1
+            else:
+                still_streak = 0
+            is_sed = _compute_is_sedentary(agg_kps, still_streak=still_streak)
             behavior.update(
                 centroid_x=centroid[0] if centroid else None,
                 centroid_y=centroid[1] if centroid else None,

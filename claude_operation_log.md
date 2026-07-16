@@ -251,4 +251,36 @@
 * **置信度或遗留待办（TODO）**：
   - 修复效果需在 P03T01C05 上 GPU 验证
   - 遮挡阈值（lower_visible ≤2）和位移阈值（5px/s）可能需微调
+
+---
+
+### [2026-07-16] - 修复 v2：坐姿检测改为时间维度静止比例 + 多人过滤调参
+
+* **当前操作动作**：第二轮修复——遮挡法失效（下半身实际可见 86%），改为基于时间维度的静止比例判定
+* **核心变更说明**：
+  1. **坐姿检测 v3**（`feature_extractor.py`）：
+     - v1: 姿态高度法 → 桌子遮挡时坐姿上半身和站姿无区别 → 全判为活动
+     - v2: 下半身遮挡 + 静止 → P03T01C05 下半身 86% 可见，失效
+     - **v3: 30 秒滑动窗口静止比例法** → 过去 30s 内 > 60% 帧位移 < 5px → 坐姿
+     - 核心洞察：站立会自然微调重心，坐姿可以长时间完全不动。偶而换姿势不影响判定（60% 而非 100%）
+     - 新增 `_still_history` (deque, 30s * fps)
+  2. **多人假阳性过滤**（`run_gpu_pipeline.py`）：
+     - 检测框最小尺寸 40px
+     - 第二人需连续存在 ≥15 帧
+     - 未达标时保留置信度最高的一人
+  3. **添加 `collections.deque` 导入**（`feature_extractor.py`）
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/feature_extractor.py` (Modified, sedentary logic v3 + deque import)
+  - `scripts/run_gpu_pipeline.py` (Modified, multi-person filter + matching sedentary logic)
+  - `claude_operation_log.md` (Updated)
+* **执行结果与验证状态**：137/137 测试通过
+* **修复效果（P03T01C05 迭代）**：
+  - v1: sedentary=0.08 active=16.05 → 全判为活动
+  - v2 (遮挡法): sedentary=0.08 → 下半身未被遮挡，无效
+  - v3 (静止比例 80%): sedentary=0.34 active=14.76 → 改善但不够
+  - v3 (静止比例 60%): sedentary=0.46 active=9.45 → 持续改善中
+* **遗留问题**：
+  - social_interaction 仍为 4.84 min（单人视频，YOLO 假阳性需进一步排查）
+  - 坐姿判定阈值（still_ratio=0.6）可能需要根据更多视频标定
+  - 需在 10 视频全量测试后确定最优阈值
 ---

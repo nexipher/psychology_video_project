@@ -278,12 +278,131 @@ def aggregate_daily(user_id: str, date: str, window_results: List[WindowMetrics]
 
 ---
 
-## 八、下一步行动
+## 八、A1 判定算法详解（当前实现 v3）
 
-1. **立即启动**：创建目录结构，编写 `config.py` 和 `skeleton_parser.py`
-2. **按顺序推进**：严格遵循 A1 → A2 → A3 → A4 依赖链
-3. **持续交付**：每完成一个子任务即追加操作日志、运行测试
+### 8.1 静止/活动判定（帧级）
+
+**输入**：YOLOv8-Pose 输出的 17 点关键点 → 多目标跟踪(ByteTrack) → 髋部质心追踪
+
+**每帧计算**：
+
+```
+centroid = (left_hip + right_hip) / 2          # 髋部中点（质心）
+max_disp = ||centroid_t - centroid_{t-15}||    # 1 秒累计位移（15fps × 1s）
+is_still_frame = max_disp < 5.0                # 1 秒内移动 < 5px → 静止
+```
+
+### 8.2 坐姿判定（时间维度）
+
+**核心假设**：站立会自然微调重心，坐姿可以长时间完全不动。
+
+```
+_still_history = deque(maxlen=450)             # 30 秒 × 15fps，存储 bool
+still_ratio = sum(True) / 450                  # 过去 30 秒静止帧占比
+
+is_truly_sedentary = (
+    len(_still_history) >= 450                 # 积累够 30 秒数据
+    AND still_ratio >= 0.6                     # ≥60% 帧静止 → 判定坐姿
+)
+
+is_standing = NOT is_truly_sedentary
+```
+
+**阈值设计**：60%（而非 100%）——允许坐姿中偶而换姿势而不打破整体判定。
+
+### 8.3 窗口级聚合（每 60s 输出一次）
+
+| 指标 | 计算方式 |
+|:---|:---|
+| `active_frames` | `person_count > 0 AND is_sedentary == False` |
+| `sedentary_frames` | `is_sedentary == True AND person_count > 0` |
+| `active_ratio` | `active_frames / window_total_frames` |
+| `sedentary_ratio` | `sedentary_frames / window_total_frames` |
+
+### 8.4 A2 久坐检测（独立运行）
+
+`ProlongedInactivityDetector` 独立追踪 `is_sedentary` 信号：
+
+| 阶段 | 阈值 | 动作 |
+|:---|:---|:---|
+| 正常 | 连续静止 < 1h | 无 |
+| 预警告 | 连续静止 ≥ 1h | `warning_triggered = True` |
+| 异常久坐 | 连续静止 ≥ 2h | `prolonged_triggered = True` |
+
+附加骨骼微动分析：静止期间关键点标准差越小 → 置信度越高。
+
+### 8.5 多人假阳性过滤
+
+```
+1. 检测框过滤：width < 40px OR height < 40px → 丢弃（背景杂物）
+2. 连续帧过滤：第二人需连续存在 ≥ 15 帧才确认
+3. 未达标 → 只保留置信度最高的 1 人
+```
+
+### 8.6 关键参数速查
+
+| 参数 | 值 | 位置 | 用途 |
+|:---|:---|:---|:---|
+| `max_disp` 阈值 | 5 px | `feature_extractor.py` | 单帧静止判定 |
+| `_still_history` | 450 帧 (30s) | `feature_extractor.py` | 静止回溯窗口 |
+| `still_ratio` 阈值 | 60% | `feature_extractor.py` | 坐姿判定 |
+| 窗口大小 | 300s (5min) | `run_gpu_pipeline.py` | 聚合窗口 |
+| 窗口步长 | 60s (1min) | `run_gpu_pipeline.py` | 输出频率 |
+| 多人最小框 | 40px | `run_gpu_pipeline.py` | 假阳性过滤 |
+| 多人连续帧 | 15 帧 | `run_gpu_pipeline.py` | 假阳性过滤 |
+| A2 久坐预警 | 3600s | `special_behavior.py` | 连续静止 1h |
+| A2 久坐异常 | 7200s | `special_behavior.py` | 连续静止 2h |
+
+### 8.7 已知局限
+
+| 问题 | 影响 | 状态 |
+|:---|:---|:---|
+| 坐姿换姿势破坏静止比例 | 短暂移动使 still_ratio 跌破 60% | 60% 阈值已缓解 |
+| YOLO nano 远端关键点不稳定 | 髋/踝置信度低，质心抖动 | 见下节 |
+| 单人视频产生虚假多人检测 | social_interaction 偏高 | 40px+15帧过滤已缓解 |
+| 昼夜节律仅单日数据 | 基线不可靠，全部默认值 | 需多日数据 |
 
 ---
 
-> 📋 计划版本: v2.0 | 创建日期: 2026-07-15 | 基于: `video_tasks.md`
+## 九、YOLO 模型限制与已知问题
+
+### 9.1 yolov8n-pose 在居家场景的表现
+
+| 维度 | 表现 | 影响 |
+|:---|:---|:---|
+| 人物检测 | ✅ 良好，检出率 >95% | 基本可靠 |
+| 上半身关键点 | ✅ 正常（鼻/眼/肩稳定） | 社交朝向可用 |
+| 下半身关键点 | ⚠️ YOLO nano 对远端关节检测不稳定 | 质心计算波动大 |
+| 多人检测 | ⚠️ 偶发假阳性（杂物误识为第二人） | social_interaction 需过滤 |
+| 桌子遮挡 | ⚠️ 无法穿透，但遮挡本身成为坐姿信号 | 已利用 |
+
+### 9.2 无法通过纯 CV 解决的问题（需 A3 MLLM 复核）
+
+| 场景 | CV 局限 | 需要 MLLM 做什么 |
+|:---|:---|:---|
+| 坐着看书 vs 呆坐打盹 | 姿态都是坐姿，无法区分 | 判断是否有书/手机，是否闭眼 |
+| 与家人交谈 vs 陌生人到访 | 仅知两人共处，不知身份 | 判断面部特征、衣着、交互氛围 |
+| 反复进出房间 vs 正常走动 | 路径重合度高但目的不明 | 判断是否焦虑、是否在找东西 |
+
+---
+
+## 十、当前进度与下一步
+
+### 已完成
+
+| 阶段 | 内容 | 测试 |
+|:---|:---|:---|
+| A1 全部 | 视频感知基座 + 特征提取 + 日级聚合 | 104 passed ✅ |
+| A2 全部 | 5 项专项行为检测器 + 总装 | 33 passed ✅ |
+| 管线集成 | A1+A2 GPU 全流程 + 并行批量 | ✅ |
+| GPU 验证 | 10 视频部分完成（P02, P03, P04, P06, P07, P10, P12, P14） | ✅ |
+
+### 下一步
+
+1. **参数标定**：在 10 视频全量结果上标定最优阈值
+2. **A3 开发**：Qwen2.5-VL 事件复核引擎
+3. **A4 开发**：多模型一致性校验与拒判机制
+
+---
+
+> 📋 计划版本: v3.0 | 更新日期: 2026-07-16 | 基于: `video_tasks.md`
