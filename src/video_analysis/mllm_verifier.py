@@ -41,7 +41,7 @@ except ImportError:
     HAS_TORCH = False
 
 try:
-    from transformers import Qwen2VLForConditionalGeneration, AutoProcessor
+    from transformers import Qwen2_5_VLForConditionalGeneration, AutoProcessor
     HAS_TRANSFORMERS = True
 except ImportError:
     HAS_TRANSFORMERS = False
@@ -180,7 +180,7 @@ class MLLMVerifier:
         logger.info(f"Loading {self._model_name} on {self._device} ...")
 
         try:
-            self._model = Qwen2VLForConditionalGeneration.from_pretrained(
+            self._model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
                 self._model_name,
                 torch_dtype=torch.bfloat16 if self._device != "cpu" else torch.float32,
                 device_map=self._device if self._device != "cpu" else None,

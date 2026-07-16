@@ -43,6 +43,10 @@ htmlcov/
 *.pb
 *.ckpt
 *.pkl
+models/
+
+# Results output
+results/A1A3/
 
 # Dataset (too large, use external storage)
 dataset/*.zip

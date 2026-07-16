@@ -361,4 +361,35 @@
 * **置信度或遗留待办（TODO）**：
   - 换环境后立即执行 A3 Batch 3：GPU 加载 Qwen2.5-VL-7B，三种 event_type 各验证一次
   - P14T14C06 作为测试视频
+
+---
+
+### [2026-07-16] - 新环境配置 + A3 Batch 3 准备
+
+* **当前操作动作**：切换 PyTorch 2.5.1 环境，安装依赖，修复 Qwen2.5-VL 代码 bug，创建 A1+A2+A3 全流程脚本
+* **核心变更说明**：
+  1. **新环境确认**：Python 3.12 + PyTorch 2.5.1+cu124 + CUDA 12.4 + transformers 5.14.0
+     - `Qwen2_5_VLForConditionalGeneration` 可正常导入（A3 阻塞解除）
+     - 全部依赖安装：ultralytics 8.4.96 / scipy 1.18.0 / opencv 5.0.0 / pytest 9.1.1
+  2. **Bug 修复**（`mllm_verifier.py`）：
+     - 第 44 行导入：`Qwen2VLForConditionalGeneration` → `Qwen2_5_VLForConditionalGeneration`
+     - 第 183 行模型加载同上修复
+  3. **配置更新**（`configs/default.yaml`）：
+     - 数据路径从 `/dataset/` 改为项目内相对路径 `dataset/`
+     - 新增 `videos_mp4`、`doubao`、压缩包路径字段
+  4. **新脚本**（`scripts/run_a1_a3_pipeline.py`）：
+     - Phase 1: YOLOv8-Pose → A1 特征提取 → A2 专项检测
+     - Phase 2: 卸载 YOLO → 加载 Qwen2.5-VL → `generate_mllm_triggers()` 扫描 A2 输出 → 逐个 MLLM 复核
+     - 输出到 `results/A1A3/{video_name}_{timestamp}.json`
+     - 默认视频: `dataset/Videos_mp4/P14T14C06.mp4`
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/mllm_verifier.py` (Modified — Qwen2.5-VL import fix)
+  - `configs/default.yaml` (Modified — dataset paths)
+  - `scripts/run_a1_a3_pipeline.py` (Created — A1+A2+A3 integrated pipeline)
+  - `.claude/settings.local.json` (Modified — dataset permissions)
+* **执行结果与验证状态**：165/165 全量测试通过（387s）；A3 28 个 Mock 测试通过；A1A3 脚本导入成功
+* **置信度或遗留待办（TODO）**：
+  - GPU 就绪后立即跑 A3 Batch 3：`python scripts/run_a1_a3_pipeline.py`
+  - 预期 YOLO ~1min + Qwen2.5-VL ~1min（加载 14GB 显存 + 推理）
+  - 数据集尚未挂载 `/dataset/`，实际路径为项目内 `dataset/`
 ---
