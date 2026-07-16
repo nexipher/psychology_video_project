@@ -392,4 +392,53 @@
   - GPU 就绪后立即跑 A3 Batch 3：`python scripts/run_a1_a3_pipeline.py`
   - 预期 YOLO ~1min + Qwen2.5-VL ~1min（加载 14GB 显存 + 推理）
   - 数据集尚未挂载 `/dataset/`，实际路径为项目内 `dataset/`
+
+---
+
+### [2026-07-16] - A3 Batch 3：Qwen2.5-VL GPU 实机验证 + A1-A3 全流程跑通
+
+* **当前操作动作**：GPU 开启，从 ModelScope 下载 Qwen2.5-VL-7B，运行 A1+A2+A3 全流程
+* **核心变更说明**：
+  1. **模型下载**：HF 镜像（hf-mirror.com）Xet 鉴权失败，改用 ModelScope（modelscope.cn）
+     - 5 个 safetensors 分片，总计 ~15.6GB，下载耗时 ~7min
+     - 本地路径：`models/models/qwen--Qwen2.5-VL-7B-Instruct/snapshots/master/`
+  2. **A1+A2 结果**（P14T14C06, 9.57min）：
+     - YOLOv8-Pose：14,358 帧，99.4 fps，显存 45MB
+     - A2 触发 1 个事件：`repetitive_behavior`（hotspot_action_count=5）
+  3. **A3 MLLM 复核**：
+     - 模型加载：7.5s，显存 15.5 GB（总 23.5 GB，剩余 ~8 GB）
+     - 推理：9.5s，输出 `repetition_type=same_route`，`evidence_sufficient=true`
+     - 证据：「老人在厨房与客厅之间来回走动3次，未接触任何物品」
+  4. **更新 `.gitignore`**：排除 `models/`、`results/A1A3/`
+* **涉及/修改的文件清单**：
+  - `scripts/run_a1_a3_pipeline.py` (Modified — local model path)
+  - `.gitignore` (Modified — exclude models/, results/A1A3/)
+* **执行结果与验证状态**：A1+A2 150s + A3 加载 7s + 推理 10s，全流程 ~3min。§6.1 校验通过。
+* **置信度或遗留待办（TODO）**：
+  - A1 噪声：room_transitions=523 异常，sedentary≈0。social_interaction=1.81min（单人视频假阳性）
+  - 仅验证了 repetitive_behavior，long_inactivity 和 social_interaction 待真实触发
+
+---
+
+### [2026-07-16] - 修复：analytical_summary 缺失 + libgomp 警告
+
+* **当前操作动作**：补充 §6.2 Schema 遗漏字段，修复 OMP_NUM_THREADS 环境变量
+* **核心变更说明**：
+  1. **analytical_summary 缺失**（三处同步修复）：
+     - `schema_validator.py`：`QWEN_VL_EVENT_SCHEMA` 新增 `analytical_summary` property
+     - `mllm_prompts.yaml`：三个 System Prompt 输出格式均加入此字段 + 说明
+     - `mllm_verifier.py`：8 个 Mock 响应 + `_safe_default()` 均补全
+     - **成因**：video_tasks.md §6.2 定义了该字段，代码实现时遗漏，不在 required 列表中故未被 Schema 校验捕获
+  2. **libgomp 警告修复**：
+     - **成因**：AutoDL 环境设 `OMP_NUM_THREADS=0`（无效值），每次启动 Python 触发 libgomp 警告
+     - **修复**：在 `~/.bashrc` 中检测到 0 则 `unset OMP_NUM_THREADS`
+  3. **第二次 GPU 验证**：Qwen2.5-VL 成功输出 `analytical_summary: "老人出现焦虑徘徊，疑似焦虑状态，需要关注"`
+* **涉及/修改的文件清单**：
+  - `src/utils/schema_validator.py` (Modified — +analytical_summary)
+  - `configs/mllm_prompts.yaml` (Modified — +analytical_summary in 3 prompts)
+  - `src/video_analysis/mllm_verifier.py` (Modified — +analytical_summary in mocks + safe_default)
+  - `~/.bashrc` (Modified — fix OMP_NUM_THREADS)
+* **执行结果与验证状态**：40/40 相关测试通过；全流程跑通，analytical_summary 正常输出
+* **置信度或遗留待办（TODO）**：
+  - Qwen2.5-VL 两次推理语义一致（焦虑相关），但措辞不完全相同（模型本身非确定性输出）
 ---

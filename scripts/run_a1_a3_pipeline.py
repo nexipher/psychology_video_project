@@ -14,6 +14,13 @@ Pipeline:
 
 from __future__ import annotations
 
+import os
+import sys
+
+# Fix AutoDL OMP_NUM_THREADS=0 bug (causes libgomp warning)
+if os.environ.get("OMP_NUM_THREADS") == "0":
+    del os.environ["OMP_NUM_THREADS"]
+
 import json
 import sys
 import time

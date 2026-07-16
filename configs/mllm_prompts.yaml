@@ -32,6 +32,7 @@ long_inactivity:
     {
       "event_type": "long_inactivity",
       "observable_evidence": "只描述画面可见事实，如：连续坐姿、无明显肢体运动、桌面有书",
+      "analytical_summary": "老人出现[现象]，疑似[结论]，需要关注",
       "start_sec": 0,
       "end_sec": 0,
       "activity_state": "sedentary",
@@ -43,6 +44,7 @@ long_inactivity:
 
     ## 字段说明
     - observable_evidence: 一句话描述你看到的画面证据
+    - analytical_summary: 一句话分析总结，格式为"老人出现[现象]，疑似[结论]，需要关注"。禁止诊断性结论（如抑郁、焦虑症等），只客观描述行为
     - activity_state: 选 "active" / "sedentary" / "uncertain"
     - social_context: 选 "alone" / "co_present" / "interacting" / "uncertain"
     - repetition_type: 此场景填 "none"
@@ -96,6 +98,7 @@ social_interaction:
     {
       "event_type": "social_interaction",
       "observable_evidence": "只描述画面可见事实，如：两人面对面坐在餐桌两侧、正在交谈、桌上有文件",
+      "analytical_summary": "老人出现[现象]，疑似[结论]，需要关注",
       "start_sec": 0,
       "end_sec": 0,
       "activity_state": "sedentary",
@@ -108,6 +111,7 @@ social_interaction:
     ## 字段说明
     - social_context: 选 "alone" / "co_present" / "interacting" / "uncertain"
     - observable_evidence: 描述人物关系、物品、氛围的证据
+    - analytical_summary: 一句话分析总结，格式为"老人出现[现象]，疑似[结论]，需要关注"。禁止诊断性结论
 
   few_shot:
     - frames: "trimmed/rgb/family_chat/*.mp4"
@@ -155,6 +159,7 @@ repetitive_behavior:
     {
       "event_type": "repetitive_behavior",
       "observable_evidence": "只描述画面可见事实，如：老人在客厅与玄关之间来回走动5次，未接触任何物品",
+      "analytical_summary": "老人出现[现象]，疑似[结论]，需要关注",
       "start_sec": 0,
       "end_sec": 0,
       "activity_state": "active",
@@ -167,6 +172,7 @@ repetitive_behavior:
     ## 字段说明
     - repetition_type: 选 "same_route" / "repeated_search" / "none" / "uncertain"
     - observable_evidence: 描述重复行为的具体表现
+    - analytical_summary: 一句话分析总结，格式为"老人出现[现象]，疑似[结论]，需要关注"。禁止诊断性结论
 
   few_shot:
     - frames: "trimmed/rgb/anxious_pace/*.mp4"

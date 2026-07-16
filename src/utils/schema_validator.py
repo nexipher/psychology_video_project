@@ -77,6 +77,10 @@ QWEN_VL_EVENT_SCHEMA: Dict[str, Any] = {
             "type": "string",
             "description": "只描述画面可见事实",
         },
+        "analytical_summary": {
+            "type": "string",
+            "description": "一句简短的分析总结，禁止医学诊断结论",
+        },
         "start_sec": {"type": "number"},
         "end_sec": {"type": "number"},
         "activity_state": {
