@@ -143,4 +143,32 @@
   - GPU 模式待用户开启后验证 YOLO 真实推理
   - 静止判定阈值需在实际数据上校准（Skeleton V1.2 Ground Truth）
   - `/dataset/` 未挂载，Skeleton V1.2 真实格式兼容性待验证
+
+---
+
+### [2026-07-16] - GPU 全流程验证 + 姿态检测修复
+
+* **当前操作动作**：RTX 4090 GPU 开启，运行 YOLOv8-Pose 真实推理，修复 sedentary 检测算法
+* **核心变更说明**：
+  1. GPU 验证：yolov8n-pose.pt 在 RTX 4090 上推理速度 109 fps，显存仅 45 MB
+  2. Sedentary 检测重构：从单帧质心位移 → 多组关键点姿态高度估算
+     - 肩-踝 / 髋-踝 / 髋-膝 / 鼻-髋 四级回退，置信度阈值 0.3→0.1
+     - 站姿判定：姿态高度 > 图像高度 15%（480p 下 72px）
+  3. coverage_minutes 修复：从窗口叠加求和 → 实际经过时间封顶
+  4. room_transitions 修复：网格分辨率 50px → 200px
+  5. 创建 `results/` 目录，输出文件带视频名和时间戳，永不覆盖
+  6. 创建 `scripts/run_gpu_pipeline.py`：GPU 全流程脚本
+* **测试视频结果**：
+  - P12T05C05 (22.6min): active=17.88min, sedentary=0.61, coverage=22.6min ✅
+  - P14T14C06 (9.6min): active=9.57min, sedentary=0.28, coverage=9.57min ✅
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/feature_extractor.py` (Modified) — 姿态高度检测 + 多级回退
+  - `src/video_analysis/pose_estimator.py` (No change, GPU verified)
+  - `scripts/run_gpu_pipeline.py` (Created)
+  - `scripts/run_cpu_pipeline.py` (Created)
+  - `results/` (Created, 8 files)
+* **执行结果与验证状态**：104/104 单元测试通过，Schema 校验通过，GPU 推理正常
+* **置信度或遗留待办（TODO）**：
+  - sedentary_ratio 在边界帧（人物刚进入/离开画面）仍有少量误报，需进一步调优
+  - 早期 `output_*.json` 文件为中间调试结果，后续以 `results/` 中时间戳文件为准
 ---
