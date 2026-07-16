@@ -202,18 +202,36 @@ class VideoFeatureExtractor:
             elif self._last_grid_cell is None:
                 self._last_grid_cell = grid_cell
 
-            # 姿态高度判定：站姿高 / 坐姿矮
-            # 使用多组关键点对应对遮挡/低置信度：肩-踝 > 髋-踝 > 鼻-髋
-            pose_heights = []
+            # ★ 坐姿检测：下半身遮挡 + 位移极小 → 坐着（桌子遮挡场景）
+            lower_visible = 0  # 髋(11,12) 膝(13,14) 踝(15,16)
+            upper_visible = 0  # 鼻(0) 眼(1,2) 耳(3,4) 肩(5,6)
             for i in range(N):
-                height = self._compute_pose_height(keypoints[i])
-                if height > 0:
-                    pose_heights.append(height)
-            avg_pose_height = float(np.mean(pose_heights)) if pose_heights else 0.0
-            # 站姿判定：肩-踝垂直距离 > 图像高度的 15%（480px * 0.15 = 72px）
-            is_standing = avg_pose_height > self._image_height * 0.15
+                for kp_idx in range(11, 17):
+                    if keypoints[i, kp_idx, 2] > 0.3:
+                        lower_visible += 1
+                for kp_idx in range(0, 7):
+                    if keypoints[i, kp_idx, 2] > 0.3:
+                        upper_visible += 1
 
-            # 综合判定静止：位移小 且 非站姿（即真的坐着/躺着不动）
+            # 下半身严重遮挡 + 上半身清晰 + 几乎不动 → 判定为坐姿
+            is_behind_occlusion = (lower_visible <= 2) and (upper_visible >= 3)
+            is_still = max_disp < 5.0  # 1 秒内质心位移 < 5px
+
+            if is_behind_occlusion and is_still:
+                is_standing = False
+            elif is_behind_occlusion and not is_still:
+                # 有遮挡但仍在移动 → 可能在桌子后站着活动
+                is_standing = True
+            else:
+                # 下半身可见：用姿态高度法
+                pose_heights = []
+                for i in range(N):
+                    height = self._compute_pose_height(keypoints[i])
+                    if height > 0:
+                        pose_heights.append(height)
+                avg_pose_height = float(np.mean(pose_heights)) if pose_heights else 0.0
+                is_standing = avg_pose_height > self._image_height * 0.15
+
             is_truly_sedentary = (max_disp < self._sedentary_max_displacement_px) and not is_standing
 
             frame_features.update({
@@ -221,7 +239,8 @@ class VideoFeatureExtractor:
                 "centroid_y": float(mean_centroid[1]) if not np.isnan(mean_centroid[1]) else None,
                 "max_displacement_px": max_disp,
                 "mean_velocity_px_s": mean_vel,
-                "pose_height_px": avg_pose_height,
+                "lower_visible": lower_visible,
+                "upper_visible": upper_visible,
                 "is_standing": is_standing,
                 "is_sedentary": is_truly_sedentary,
                 "room_transition": has_room_transition,
@@ -233,7 +252,8 @@ class VideoFeatureExtractor:
                 "centroid_y": None,
                 "max_displacement_px": 0.0,
                 "mean_velocity_px_s": 0.0,
-                "pose_height_px": 0.0,
+                "lower_visible": 0,
+                "upper_visible": 0,
                 "is_standing": False,
                 "is_sedentary": True,  # 无人时视为静止
                 "room_transition": False,

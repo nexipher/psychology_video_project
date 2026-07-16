@@ -70,18 +70,26 @@ def _compute_pose_height(kps: np.ndarray) -> float:
     return 0.0
 
 
-def _compute_is_sedentary(keypoints: np.ndarray) -> bool:
-    """判断当前帧是否静止/久坐。站姿→非静止，无人→静止。"""
+def _compute_is_sedentary(keypoints: np.ndarray, max_displacement: float = 0.0) -> bool:
+    """判断当前帧是否静止/久坐。下半身遮挡+位移小→坐姿。无人→静止。"""
     N = keypoints.shape[0]
     if N == 0:
         return True
-    heights = []
+    is_standing = False
     for i in range(N):
-        h = _compute_pose_height(keypoints[i])
-        if h > 0:
-            heights.append(h)
-    avg_h = float(np.mean(heights)) if heights else 0.0
-    is_standing = avg_h > 72  # 15% of 480px
+        lower_vis = sum(1 for k in range(11, 17) if keypoints[i, k, 2] > 0.3)
+        upper_vis = sum(1 for k in range(0, 7) if keypoints[i, k, 2] > 0.3)
+        is_behind = (lower_vis <= 2) and (upper_vis >= 3)
+        is_still = max_displacement < 5.0
+        if is_behind and is_still:
+            is_standing = False
+        elif is_behind and not is_still:
+            is_standing = True
+        else:
+            h = _compute_pose_height(keypoints[i])
+            is_standing = h > 72
+        if is_standing:
+            break  # 只要有一个人站姿，整体就不算静止
     return not is_standing
 
 
@@ -119,6 +127,11 @@ def main():
     # ★ A2 专项行为检测器
     behavior = SpecialBehaviorDetector(fps=15.0)
 
+    # ★ 多人假阳性过滤器
+    multi_person_min_frames = 15      # 第二人需连续存在 ≥15 帧
+    multi_person_min_bbox_size = 40   # 检测框最小边长（像素）
+    multi_person_streak = 0
+
     print(f"源帧率: {stream.native_fps:.1f} → 目标帧率: {stream.target_fps:.1f}")
     print(f"预计处理帧数: {stream.get_frame_count()}")
     print(f"模型: yolov8n-pose.pt | A1 + A2 全管线")
@@ -142,14 +155,42 @@ def main():
 
             # Step 1: GPU 姿态估计
             pose_result = estimator.estimate(rgb_frame)
-            n_detected = pose_result["keypoints"].shape[0]
+
+            # ★ 过滤假阳性：检测框过小（背景杂物误识别）
+            raw_kps = pose_result["keypoints"]     # (N, 17, 3)
+            raw_bboxes = pose_result["bboxes"]      # (N, 4)
+            raw_confs = pose_result["confidences"]  # (N,)
+            valid_mask = np.ones(len(raw_confs), dtype=bool)
+            for i in range(len(raw_confs)):
+                bw = raw_bboxes[i, 2] - raw_bboxes[i, 0]
+                bh = raw_bboxes[i, 3] - raw_bboxes[i, 1]
+                if bw < multi_person_min_bbox_size or bh < multi_person_min_bbox_size:
+                    valid_mask[i] = False
+            filtered_kps = raw_kps[valid_mask]
+            filtered_bboxes = raw_bboxes[valid_mask]
+            filtered_confs = raw_confs[valid_mask]
+            n_raw = len(raw_confs)
+            n_detected = len(filtered_confs)
+
+            # ★ 多人连续帧过滤：第二人需持续存在
+            if n_detected >= 2:
+                multi_person_streak += 1
+                if multi_person_streak < multi_person_min_frames:
+                    # 未达连续帧阈值，只保留置信度最高的一人
+                    best_idx = int(np.argmax(filtered_confs))
+                    filtered_kps = filtered_kps[best_idx:best_idx+1]
+                    filtered_bboxes = filtered_bboxes[best_idx:best_idx+1]
+                    filtered_confs = filtered_confs[best_idx:best_idx+1]
+                    n_detected = 1
+            else:
+                multi_person_streak = 0
+
             total_persons_detected += n_detected
 
-            # Step 2: 多目标跟踪
+            # Step 2: 多目标跟踪（使用过滤后的检测）
             if n_detected > 0:
                 active = tracker.update(
-                    pose_result["keypoints"], pose_result["bboxes"],
-                    pose_result["confidences"], frame_idx,
+                    filtered_kps, filtered_bboxes, filtered_confs, frame_idx,
                 )
             else:
                 active = tracker.update(
@@ -178,7 +219,13 @@ def main():
 
             # Step 5: A2 专项行为检测
             centroid = _compute_centroid(agg_kps)
-            is_sed = _compute_is_sedentary(agg_kps)
+            # 估算质心位移（简单帧间距离，用于遮挡场景下的静止判断）
+            disp = 0.0
+            if centroid is not None and behavior._frame_count > 0:
+                if hasattr(behavior, '_last_centroid') and behavior._last_centroid is not None:
+                    disp = np.linalg.norm(np.array(centroid) - np.array(behavior._last_centroid)) * 15.0
+                behavior._last_centroid = centroid
+            is_sed = _compute_is_sedentary(agg_kps, max_displacement=disp)
             behavior.update(
                 centroid_x=centroid[0] if centroid else None,
                 centroid_y=centroid[1] if centroid else None,

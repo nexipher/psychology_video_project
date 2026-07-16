@@ -49,6 +49,7 @@ dataset/*.zip
 dataset/*.tar.gz
 dataset/*.tar
 dataset/Videos_mp4/
+dataset/doubao/
 !dataset/.gitkeep
 
 # Environment

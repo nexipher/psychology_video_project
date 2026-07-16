@@ -1,0 +1,40 @@
+{
+  "user_id": "P03T01C05",
+  "date": "2026-07-16",
+  "daily_metrics": {
+    "active_minutes": 16.05,
+    "sedentary_ratio": 0.0809,
+    "room_transition_count": 1015,
+    "night_activity_count": 89,
+    "social_interaction_minutes": 9.61,
+    "repetitive_path_count": 0,
+    "movement_speed": 0.0318,
+    "coverage_minutes": 16.05,
+    "feature_confidence": 0.7526
+  },
+  "a2_special_behavior": {
+    "daily_repetitive_path_count": 0,
+    "daily_hotspot_action_count": 7,
+    "daily_prolonged_inactive_count": 0,
+    "max_inactive_stretch_sec": 94.0,
+    "daily_avg_social_intensity": 0.63073,
+    "circadian": {
+      "date": "2026-07-16",
+      "wake_time": 8.0,
+      "sleep_time": 23.0,
+      "nap_duration_minutes": 0.0,
+      "baseline_wake_mean": 8.0,
+      "baseline_sleep_mean": 23.0,
+      "wake_offset_hours": 0.0,
+      "sleep_offset_hours": 0.0,
+      "is_circadian_disturbed": false,
+      "baseline_days_count": 0,
+      "confidence_score": 0.4,
+      "time_window": [
+        0.0,
+        24.0
+      ],
+      "valid_duration": 0.0
+    }
+  }
+}
