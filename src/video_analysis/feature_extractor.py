@@ -77,6 +77,11 @@ class VideoFeatureExtractor:
         self._image_height = image_height
         self._sedentary_max_displacement_px = sedentary_max_displacement_px
         self._sedentary_min_duration_sec = sedentary_min_duration_sec
+        # 使用 1 秒累计位移判定静止/活动
+        self._track_positions: Dict[int, List[np.ndarray]] = {}  # track_id → recent centroids
+        self._track_active: Dict[int, bool] = {}
+        self._sedentary_history_sec = 1.0  # 累计 1 秒位移来判断
+        self._sedentary_history_frames = max(1, int(fps * self._sedentary_history_sec))
         self._grid_resolution = grid_resolution
 
         # 工具
@@ -147,27 +152,43 @@ class VideoFeatureExtractor:
             # Actually, for per-frame data, let me compute directly
             centroids = self._compute_centroids(keypoints)  # (N, 2)
 
-            # 运动速度（与上一帧相比）
+            # 运动速度（累计 1 秒位移判定活动/静止）
             velocities = []
-            displacements = []
+            cumulative_displacements = []
             for i, tid in enumerate(track_ids):
                 c = centroids[i]
                 if not np.isnan(c).any():
+                    # --- Track position history ---
+                    if tid not in self._track_positions:
+                        self._track_positions[tid] = []
+                    positions = self._track_positions[tid]
+                    positions.append(c)
+                    if len(positions) > self._sedentary_history_frames:
+                        positions.pop(0)
+
+                    # 累计位移（1 秒窗口内的总位移）
+                    if len(positions) >= 2:
+                        cum_disp = np.linalg.norm(positions[-1] - positions[0])
+                    else:
+                        cum_disp = 0.0
+
+                    # 瞬时速度（帧间）
                     if tid in self._prev_centroids:
                         prev_c = self._prev_centroids[tid]
-                        disp = np.linalg.norm(c - prev_c)
+                        inst_disp = np.linalg.norm(c - prev_c)
                     else:
-                        disp = 0.0
-                    displacements.append(disp)
-                    velocities.append(disp * self._fps)  # px/s
+                        inst_disp = 0.0
+                    velocities.append(inst_disp * self._fps)
+                    cumulative_displacements.append(cum_disp)
+                    self._prev_centroids[tid] = c
                 else:
-                    displacements.append(0.0)
                     velocities.append(0.0)
-                self._prev_centroids[tid] = c
+                    cumulative_displacements.append(0.0)
 
             mean_centroid = np.nanmean(centroids, axis=0) if N > 0 else np.array([np.nan, np.nan])
-            max_disp = max(displacements) if displacements else 0.0
+            max_cum_disp = max(cumulative_displacements) if cumulative_displacements else 0.0
             mean_vel = float(np.mean(velocities)) if velocities else 0.0
+            max_disp = max_cum_disp  # 用累计位移替代单帧位移
 
             # 网格位置（用于检测房间切换）
             grid_cell = self._compute_grid_cell(mean_centroid)
