@@ -308,4 +308,29 @@
   - Real 模式需 GPU 审批后加载 Qwen2.5-VL-7B（预计 ~14GB 显存）
   - Few-Shot 示例需用 Toyota Smarthome Trimmed RGB 真实数据替换占位路径
   - A3 Batch 2 待实现：事件触发集成 + Mock 单元测试
+
+---
+
+### [2026-07-16] - A3 Batch 2：事件触发集成 + MLLM 单元测试
+
+* **当前操作动作**：创建 `generate_mllm_triggers` 事件扫描函数 + 28 个单元测试
+* **核心变更说明**：
+  1. `generate_mllm_triggers()`：扫描 A2 `get_daily_summary()` 输出，按优先级生成 MLLM 复核事件列表
+     - 徘徊/热点动作 → `repetitive_behavior`（优先级 1）
+     - 社交强度 > 0.3 → `social_interaction`（优先级 2）
+     - 久坐事件 > 0 或 max_stretch > 1h → `long_inactivity`（优先级 3）
+     - 支持传入原始事件列表提取精确触发时间戳
+  2. `tests/test_mllm_verifier.py`：28 个测试（使用 Videos_mp4/P14T14C06）
+     - Prompt 模板测试（5）：封闭标签、JSON 格式、Few-Shot 完整性
+     - Verifier Mock 测试（11）：三种 event_type 全路径 + §6.2 Schema 校验 + 批量复核 + 异常处理
+     - 事件触发集成测试（7）：四种触发场景 + 优先级排序 + 空事件过滤
+     - 降级与异常测试（2）：safe_default、无效视频降级
+     - 辅助函数测试（3）：_find_event_ts
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/mllm_verifier.py` (Modified, +60 lines trigger integration)
+  - `tests/test_mllm_verifier.py` (Created, 291 lines)
+* **执行结果与验证状态**：165/165 全量测试通过（A1 104 + A2 33 + A3 28），耗时 ~6 min
+* **置信度或遗留待办（TODO）**：
+  - 事件触发目前扫描日级汇总，实际部署应改为实时事件驱动
+  - A3 Batch 3 待实现：GPU 实机加载 Qwen2.5-VL-7B 验证三种复核任务
 ---

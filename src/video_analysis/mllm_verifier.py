@@ -454,3 +454,79 @@ class MLLMVerifier:
             f"MLLMVerifier(mode={self._mode}, model={self._model_name}, "
             f"frames={self._num_frames}, loaded={self._model_loaded})"
         )
+
+
+# ============================================================
+# 事件触发集成
+# ============================================================
+
+def generate_mllm_triggers(
+    a2_daily_summary: Dict[str, Any],
+    a2_events: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    min_confidence: float = 0.3,
+) -> List[Dict[str, Any]]:
+    """扫描 A2 检测器输出，生成需要 MLLM 复核的事件列表。
+
+    Args:
+        a2_daily_summary: SpecialBehaviorDetector.get_daily_summary() 的输出。
+        a2_events: 可选，各检测器的原始事件列表（包含 timestamp）。
+        min_confidence: 最低置信度阈值，低于此值不触发。
+
+    Returns:
+        [{"event_type": str, "trigger_ts": float, "reason": str}, ...]
+        按优先级排序（反复行为 > 社交异常 > 久坐）。
+    """
+    triggers: List[Dict[str, Any]] = []
+
+    # 1. 徘徊/重复行为 → repetitive_behavior
+    rep_count = a2_daily_summary.get("daily_repetitive_path_count", 0)
+    hotspot_count = a2_daily_summary.get("daily_hotspot_action_count", 0)
+    if rep_count > 0 or hotspot_count > 0:
+        ts = _find_event_ts(a2_events, "repetitive_path") if a2_events else 0.0
+        triggers.append({
+            "event_type": "repetitive_behavior",
+            "trigger_ts": ts,
+            "reason": f"徘徊事件={rep_count}, 热点动作={hotspot_count}",
+            "priority": 1,
+        })
+
+    # 2. 社交异常 → social_interaction
+    social_intensity = a2_daily_summary.get("daily_avg_social_intensity", 0)
+    if social_intensity > 0.3:
+        ts = _find_event_ts(a2_events, "social_interaction") if a2_events else 0.0
+        triggers.append({
+            "event_type": "social_interaction",
+            "trigger_ts": ts,
+            "reason": f"社交强度={social_intensity:.2f}",
+            "priority": 2,
+        })
+
+    # 3. 久坐/静止异常 → long_inactivity
+    prolonged_count = a2_daily_summary.get("daily_prolonged_inactive_count", 0)
+    max_stretch = a2_daily_summary.get("max_inactive_stretch_sec", 0)
+    if prolonged_count > 0 or max_stretch > 3600:
+        ts = _find_event_ts(a2_events, "prolonged_inactivity") if a2_events else 0.0
+        triggers.append({
+            "event_type": "long_inactivity",
+            "trigger_ts": ts,
+            "reason": f"久坐事件={prolonged_count}, 最长静止={max_stretch:.0f}s",
+            "priority": 3,
+        })
+
+    # 按优先级排序
+    triggers.sort(key=lambda t: t["priority"])
+    return triggers
+
+
+def _find_event_ts(
+    a2_events: Optional[Dict[str, List[Dict[str, Any]]]],
+    event_key: str,
+    default_ts: float = 0.0,
+) -> float:
+    """从 A2 事件列表中提取最近一次事件的时间戳。"""
+    if a2_events is None:
+        return default_ts
+    events = a2_events.get(event_key, [])
+    if not events:
+        return default_ts
+    return float(events[-1].get("timestamp", default_ts))
