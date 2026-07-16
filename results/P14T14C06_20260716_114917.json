@@ -1,0 +1,15 @@
+{
+  "user_id": "P14T14C06",
+  "date": "2026-07-16",
+  "daily_metrics": {
+    "active_minutes": 7.73,
+    "sedentary_ratio": 0.4868,
+    "room_transition_count": 2734,
+    "night_activity_count": 25,
+    "social_interaction_minutes": 3.23,
+    "repetitive_path_count": 0,
+    "movement_speed": 0.0565,
+    "coverage_minutes": 20.71,
+    "feature_confidence": 0.8359
+  }
+}

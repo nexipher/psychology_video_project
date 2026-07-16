@@ -32,7 +32,13 @@ def main():
     video_path = sys.argv[1] if len(sys.argv) > 1 else (
         "/root/autodl-tmp/psychology_video_project/dataset/Videos_mp4/P12T05C05.mp4"
     )
-    output_path = sys.argv[2] if len(sys.argv) > 2 else "output_daily_metrics.json"
+    # 从视频路径提取视频名
+    video_name = Path(video_path).stem  # e.g. "P12T05C05"
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    results_dir = Path(__file__).resolve().parent.parent / "results"
+    results_dir.mkdir(exist_ok=True)
+    output_path = str(results_dir / f"{video_name}_{timestamp}.json")
 
     # ---- GPU 检查 ----
     if not check_gpu_available():
@@ -159,7 +165,7 @@ def main():
     print(f"平均检测人数: {total_persons_detected / max(total_frames, 1):.2f}")
 
     # ---- 日级聚合 ----
-    daily = extractor.get_daily_summary(user_id="P12T05C05", date="2026-07-15")
+    daily = extractor.get_daily_summary(user_id=video_name, date=datetime.now().strftime("%Y-%m-%d"))
 
     print(f"\n{'='*60}")
     print("日级指标 (§6.1 JSON Schema):")

@@ -82,7 +82,7 @@ class VideoFeatureExtractor:
         self._track_active: Dict[int, bool] = {}
         self._sedentary_history_sec = 1.0  # 累计 1 秒位移来判断
         self._sedentary_history_frames = max(1, int(fps * self._sedentary_history_sec))
-        self._grid_resolution = grid_resolution
+        self._grid_resolution = grid_resolution * 4  # 200px grid, 减少抖动误报
 
         # 工具
         self._skel_parser = SkeletonParser(image_width, image_height)
@@ -202,12 +202,28 @@ class VideoFeatureExtractor:
             elif self._last_grid_cell is None:
                 self._last_grid_cell = grid_cell
 
+            # 姿态高度判定：站姿高 / 坐姿矮
+            # 使用多组关键点对应对遮挡/低置信度：肩-踝 > 髋-踝 > 鼻-髋
+            pose_heights = []
+            for i in range(N):
+                height = self._compute_pose_height(keypoints[i])
+                if height > 0:
+                    pose_heights.append(height)
+            avg_pose_height = float(np.mean(pose_heights)) if pose_heights else 0.0
+            # 站姿判定：肩-踝垂直距离 > 图像高度的 15%（480px * 0.15 = 72px）
+            is_standing = avg_pose_height > self._image_height * 0.15
+
+            # 综合判定静止：位移小 且 非站姿（即真的坐着/躺着不动）
+            is_truly_sedentary = (max_disp < self._sedentary_max_displacement_px) and not is_standing
+
             frame_features.update({
                 "centroid_x": float(mean_centroid[0]) if not np.isnan(mean_centroid[0]) else None,
                 "centroid_y": float(mean_centroid[1]) if not np.isnan(mean_centroid[1]) else None,
                 "max_displacement_px": max_disp,
                 "mean_velocity_px_s": mean_vel,
-                "is_sedentary": max_disp < self._sedentary_max_displacement_px,
+                "pose_height_px": avg_pose_height,
+                "is_standing": is_standing,
+                "is_sedentary": is_truly_sedentary,
                 "room_transition": has_room_transition,
                 "grid_cell": grid_cell,
             })
@@ -217,6 +233,8 @@ class VideoFeatureExtractor:
                 "centroid_y": None,
                 "max_displacement_px": 0.0,
                 "mean_velocity_px_s": 0.0,
+                "pose_height_px": 0.0,
+                "is_standing": False,
                 "is_sedentary": True,  # 无人时视为静止
                 "room_transition": False,
                 "grid_cell": None,
@@ -236,6 +254,44 @@ class VideoFeatureExtractor:
             return self._compute_window_metrics(timestamp)
 
         return None
+
+    @staticmethod
+    def _compute_pose_height(kps: np.ndarray) -> float:
+        """用多组关键点估算人体姿态高度，按优先级回退。
+
+        Priority: 肩→踝 > 髋→踝 > 鼻→髋
+
+        Args:
+            kps: (17, 3) 单人关键点。
+
+        Returns:
+            姿态高度（像素），无法估算时返回 0。
+        """
+        pairs = [
+            # (upper_idx1, upper_idx2, lower_idx1, lower_idx2, min_conf)
+            (5, 6, 15, 16, 0.1),   # shoulders → ankles
+            (11, 12, 15, 16, 0.1),  # hips → ankles
+            (11, 12, 13, 14, 0.1),  # hips → knees
+            (0, 0, 11, 12, 0.1),    # nose → hips (use single nose)
+        ]
+        for u1, u2, l1, l2, min_c in pairs:
+            # Upper point: average of pair
+            if u1 == u2:
+                upper_y = kps[u1, 1]
+                upper_c = kps[u1, 2]
+            else:
+                upper_y = (kps[u1, 1] + kps[u2, 1]) / 2.0
+                upper_c = (kps[u1, 2] + kps[u2, 2]) / 2.0
+
+            lower_y = (kps[l1, 1] + kps[l2, 1]) / 2.0
+            lower_c = (kps[l1, 2] + kps[l2, 2]) / 2.0
+
+            if upper_c > min_c and lower_c > min_c:
+                h = abs(lower_y - upper_y)
+                if h > 10:  # 合理的姿态高度至少 10px
+                    return float(h)
+
+        return 0.0
 
     def _compute_centroids(self, keypoints: np.ndarray) -> np.ndarray:
         """从 (N, 17, 3) 关键点计算 N 个质心（髋部中点）。
@@ -400,21 +456,21 @@ class VideoFeatureExtractor:
         self, user_id: str, date: str
     ) -> Dict[str, Any]:
         """从窗口历史聚合日级指标。"""
-        total_sec = sum(
-            max(0, w["valid_duration_sec"]) for w in self._window_history
+        total_sec = self._elapsed_sec  # 实际经过时间，非窗口叠加
+        coverage_sec = min(
+            total_sec,
+            sum(w["valid_duration_sec"] * w["coverage_ratio"] for w in self._window_history)
         )
-        coverage_sec = sum(
-            w["valid_duration_sec"] * w["coverage_ratio"]
-            for w in self._window_history
+        active_sec = min(
+            total_sec,
+            sum(w["valid_duration_sec"] * w["active_ratio"] for w in self._window_history)
         )
-        active_sec = sum(
-            w["valid_duration_sec"] * w["active_ratio"]
-            for w in self._window_history
-        )
+        # 只看有人体检测的窗口
+        windows_with_person = [w for w in self._window_history if w["coverage_ratio"] > 0.1]
         sedentary_ratio = (
-            sum(w["sedentary_ratio"] for w in self._window_history)
-            / len(self._window_history)
-            if self._window_history else 0.0
+            sum(w["sedentary_ratio"] for w in windows_with_person)
+            / len(windows_with_person)
+            if windows_with_person else 0.0
         )
         total_transitions = sum(w["room_transitions"] for w in self._window_history)
         night_frames = sum(w["night_activity_frames"] for w in self._window_history)

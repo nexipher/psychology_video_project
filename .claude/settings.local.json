@@ -25,7 +25,8 @@
       "Bash(cp /root/autodl-tmp/psychology_video_project/dataset/Videos_mp4/P12T05C05.mp4 /tmp/P12T05C05.mp4)",
       "Read(//tmp/**)",
       "Bash(pip list *)",
-      "Bash(grep -v \"Downloading\\\\|libgomp\\\\|^\\\\s*$\")"
+      "Bash(grep -v \"Downloading\\\\|libgomp\\\\|^\\\\s*$\")",
+      "Bash(grep -v \"libgomp\\\\|^\\\\s*$\")"
     ]
   }
 }
