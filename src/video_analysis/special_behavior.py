@@ -486,7 +486,7 @@ class ProlongedInactivityDetector:
         return None
 
     def _emit_inactive_event(self, current_ts: float) -> Dict[str, Any]:
-        start_ts = self._current_inactive_start or current_ts
+        start_ts = self._current_inactive_start if self._current_inactive_start is not None else current_ts
         duration = current_ts - start_ts
         if duration > self._max_inactive_stretch:
             self._max_inactive_stretch = duration
@@ -827,4 +827,188 @@ class SocialInteractionAnalyzer:
     def reset(self) -> None:
         self._frame_records.clear()
         self._events.clear()
+        self._last_check_ts = -self._stride_sec
+
+
+# ============================================================
+# 7. 专项行为检测总装
+# ============================================================
+
+class SpecialBehaviorDetector:
+    """专项行为检测统一入口。
+
+    将 5 个检测器组装为单一管线，接收每帧数据后自动分发到各子检测器。
+    所有子检测器可独立启用/禁用（可插拔）。
+
+    用法:
+        detector = SpecialBehaviorDetector(fps=15.0)
+        for frame_data in video_frames:
+            results = detector.update(
+                centroid_x, centroid_y,
+                is_sedentary, timestamp,
+                keypoints, bboxes, track_ids,
+            )
+            if results:
+                for name, r in results.items():
+                    print(f"{name}: {r}")
+    """
+
+    def __init__(
+        self,
+        fps: float = 15.0,
+        image_width: float = 640.0,
+        image_height: float = 480.0,
+        enable_wandering: bool = True,
+        enable_repeated_action: bool = True,
+        enable_inactivity: bool = True,
+        enable_circadian: bool = True,
+        enable_social: bool = True,
+        **kwargs,
+    ) -> None:
+        self._fps = fps
+        self._image_width = image_width
+        self._image_height = image_height
+
+        # 子检测器（可按需启用/禁用）
+        self._wandering = (
+            RepetitivePathDetector(fps=fps, **kwargs.get("wandering", {}))
+            if enable_wandering else None
+        )
+        self._repeated_action = (
+            RepeatedActionDetector(fps=fps, **kwargs.get("repeated_action", {}))
+            if enable_repeated_action else None
+        )
+        self._inactivity = (
+            ProlongedInactivityDetector(fps=fps, **kwargs.get("inactivity", {}))
+            if enable_inactivity else None
+        )
+        self._circadian = (
+            CircadianRhythmAnalyzer(fps=fps, **kwargs.get("circadian", {}))
+            if enable_circadian else None
+        )
+        self._social = (
+            SocialInteractionAnalyzer(fps=fps, **kwargs.get("social", {}))
+            if enable_social else None
+        )
+
+        self._frame_count = 0
+        self._hourly_buffer: List[Tuple[float, bool]] = []  # for circadian
+
+    def update(
+        self,
+        centroid_x: Optional[float],
+        centroid_y: Optional[float],
+        is_sedentary: bool,
+        timestamp: float,
+        keypoints: Optional[np.ndarray] = None,     # (N, 17, 3)
+        bboxes: Optional[np.ndarray] = None,         # (N, 4)
+        track_ids: Optional[List[int]] = None,
+    ) -> Dict[str, Any]:
+        """处理单帧数据，返回所有触发检测的结果。
+
+        Returns:
+            {"detector_name": result_dict, ...}  仅包含触发了输出的检测器。
+        """
+        self._frame_count += 1
+        outputs: Dict[str, Any] = {}
+
+        N = keypoints.shape[0] if keypoints is not None else 0
+        has_person = N > 0 and centroid_x is not None and centroid_y is not None
+
+        # 1. 徘徊检测
+        if self._wandering is not None and has_person:
+            r = self._wandering.update(centroid_x, centroid_y, timestamp)
+            if r:
+                outputs["repetitive_path"] = r
+
+        # 2. 重复动作
+        if self._repeated_action is not None and has_person:
+            r = self._repeated_action.update(centroid_x, centroid_y, timestamp)
+            if r:
+                outputs["repeated_action"] = r
+
+        # 3. 久坐/静止
+        if self._inactivity is not None:
+            kp_for_inactivity = None
+            if keypoints is not None and N > 0:
+                kp_for_inactivity = keypoints[0]  # 只取第一个人的关键点
+            r = self._inactivity.update(is_sedentary, timestamp, kp_for_inactivity)
+            if r:
+                outputs["prolonged_inactivity"] = r
+
+        # 4. 昼夜节律 — 每小时聚合一次
+        if self._circadian is not None:
+            hour = (timestamp / 3600.0) % 24
+            is_active = has_person and not is_sedentary
+            self._hourly_buffer.append((hour, is_active))
+            # 每累积 ~1 小时的数据，喂给 circadian
+            if len(self._hourly_buffer) >= int(self._fps * 3600):
+                for h, act in self._hourly_buffer:
+                    self._circadian.feed_hourly(h, act)
+                self._hourly_buffer.clear()
+
+        # 5. 社交互动
+        if self._social is not None and N >= 2 and keypoints is not None:
+            kps_list = [keypoints[i] for i in range(N)]
+            r = self._social.update(kps_list, bboxes if bboxes is not None else np.zeros((N, 4)), timestamp)
+            if r:
+                outputs["social_interaction"] = r
+
+        return outputs
+
+    def flush(self, current_ts: float) -> Dict[str, Any]:
+        """视频结束时刷新所有检测器缓冲区。"""
+        outputs: Dict[str, Any] = {}
+        if self._inactivity is not None:
+            r = self._inactivity.flush(current_ts)
+            if r:
+                outputs["prolonged_inactivity"] = r
+        return outputs
+
+    def get_circadian_report(self, date: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """获取昼夜节律日报。"""
+        if self._circadian is not None:
+            return self._circadian.analyze(date)
+        return None
+
+    def get_daily_summary(self, date: Optional[str] = None) -> Dict[str, Any]:
+        """获取所有检测器的日级汇总。"""
+        summary: Dict[str, Any] = {}
+
+        if self._wandering is not None:
+            summary["daily_repetitive_path_count"] = self._wandering.get_daily_repetitive_count()
+        if self._repeated_action is not None:
+            summary["daily_hotspot_action_count"] = self._repeated_action.get_daily_hotspot_count()
+        if self._inactivity is not None:
+            summary["daily_prolonged_inactive_count"] = self._inactivity.get_daily_prolonged_count()
+            summary["max_inactive_stretch_sec"] = self._inactivity.max_inactive_stretch_sec
+        if self._social is not None:
+            summary["daily_avg_social_intensity"] = self._social.get_daily_avg_intensity()
+        if self._circadian is not None:
+            cr = self._circadian.analyze(date)
+            if cr:
+                summary["circadian"] = cr
+
+        return summary
+
+    @property
+    def frame_count(self) -> int:
+        return self._frame_count
+
+    def reset(self) -> None:
+        self._frame_count = 0
+        self._hourly_buffer.clear()
+        for det in [self._wandering, self._repeated_action, self._inactivity, self._circadian, self._social]:
+            if det is not None:
+                det.reset()
+
+    def __repr__(self) -> str:
+        parts = []
+        for name, det in [
+            ("wandering", self._wandering), ("repeated_action", self._repeated_action),
+            ("inactivity", self._inactivity), ("circadian", self._circadian),
+            ("social", self._social),
+        ]:
+            parts.append(f"{name}={det is not None}")
+        return f"SpecialBehaviorDetector(frames={self._frame_count}, {', '.join(parts)})"
         self._last_check_ts = -self._stride_sec

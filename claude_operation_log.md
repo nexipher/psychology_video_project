@@ -210,4 +210,22 @@
   - 昼夜节律需多天数据才能建立有效基线（当前置信度低）
   - 社交朝向角度依赖肩部关键点——桌子遮挡时精度下降
   - A2 Batch 3 待实现：SpecialBehaviorDetector 总装 + 单元测试 + GPU 验证
+
+---
+
+### [2026-07-16] - A2 Batch 3：SpecialBehaviorDetector 总装 + 单元测试
+
+* **当前操作动作**：创建 SpecialBehaviorDetector 统一入口 + 33 个单元测试
+* **核心变更说明**：
+  1. `SpecialBehaviorDetector`：5 个检测器的统一入口，单个 `update()` 调用自动分发到各子检测器，支持独立启用/禁用（可插拔架构），提供 `flush()` / `get_daily_summary()` / `get_circadian_report()` 接口
+  2. 修复 `ProlongedInactivityDetector` 的 `0.0 or current_ts`  falsy bug（改为 `is not None` 判定）
+  3. 创建 `tests/test_special_behavior.py`：33 个测试覆盖 7 个类
+  4. 全量测试套件：**137 个测试全部通过**（A1 104 + A2 33）
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/special_behavior.py` (Modified, +147 lines, 990 total)
+  - `tests/test_special_behavior.py` (Created, 270 lines)
+* **执行结果与验证状态**：`pytest tests/` — 137 passed, 0 failed in 69s
+* **置信度或遗留待办（TODO）**：
+  - GPU 验证待开启后在三段视频上集成 SpecialBehaviorDetector 跑全流程
+  - 所有检测器参数（阈值、窗口、分辨率）需在真实数据上标定
 ---
