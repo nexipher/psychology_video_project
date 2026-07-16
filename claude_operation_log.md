@@ -171,4 +171,22 @@
 * **置信度或遗留待办（TODO）**：
   - sedentary_ratio 在边界帧（人物刚进入/离开画面）仍有少量误报，需进一步调优
   - 早期 `output_*.json` 文件为中间调试结果，后续以 `results/` 中时间戳文件为准
+
+---
+
+### [2026-07-16] - A2 Batch 1：轨迹建图 + 徘徊检测 + 重复动作检测
+
+* **当前操作动作**：创建 `special_behavior.py`，实现空间轨迹映射和两项专项检测器
+* **核心变更说明**：
+  1. `SpatialTrajectoryMap`：200px 网格空间建图，记录路径序列、网格访问计数、网格间转移计数
+  2. `RepetitivePathDetector`：10 分钟滑动窗口内统计重复边（同一段路径出现 ≥3 次），计算路径重合度，超过 40% 阈值标记徘徊
+  3. `RepeatedActionDetector`：空间聚类识别热点区域，统计短时间窗内的进出次数，超过阈值标记重复行为
+  4. 所有输出均包含 `time_window`、`valid_duration`、`confidence_score`（§A2 质量要求）
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/special_behavior.py` (Created)
+* **执行结果与验证状态**：SpatialTrajectoryMap 网格映射测试通过；RepetitivePathDetector 徘徊模拟测试通过；RepeatedActionDetector 热点检测测试通过
+* **置信度或遗留待办（TODO）**：
+  - 徘徊检测需在真实视频上验证（当前模拟数据测试）
+  - 重复动作检测的热点聚类半径需根据实际场景标定
+  - A2 Batch 2 待实现：异常久坐、昼夜节律、社交互动
 ---
