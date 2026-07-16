@@ -414,3 +414,417 @@ class RepeatedActionDetector:
         self._trajectory.clear()
         self._events.clear()
         self._last_check_ts = -self._stride_sec
+
+
+# ============================================================
+# 4. 异常久坐/久卧检测
+# ============================================================
+
+class ProlongedInactivityDetector:
+    """长时间静止与异常久坐/久卧检测器。
+
+    检测原理:
+      1. 跟踪连续静止帧数（每帧 is_sedentary=True）
+      2. 若持续静止超过预设阈值（如 2 小时），触发警示
+      3. 结合骨骼关键点微弱变化判断是正常睡眠还是异常无法起身
+
+    输出:
+      {
+        "timestamp": float,
+        "time_window": [start_sec, end_sec],
+        "valid_duration": float,
+        "continuous_inactive_sec": float,
+        "max_inactive_stretch_sec": float,
+        "warning_triggered": bool,
+        "prolonged_triggered": bool,
+        "keypoint_micro_motion": float,
+        "confidence_score": float,
+      }
+    """
+
+    def __init__(
+        self,
+        prolonged_threshold_sec: float = 7200.0,
+        warning_threshold_sec: float = 3600.0,
+        micro_motion_window_sec: float = 60.0,
+        min_micro_motion_px: float = 2.0,
+        fps: float = 15.0,
+    ) -> None:
+        self._prolonged_threshold = prolonged_threshold_sec
+        self._warning_threshold = warning_threshold_sec
+        self._micro_motion_window = int(micro_motion_window_sec * fps)
+        self._min_micro_motion_px = min_micro_motion_px
+        self._fps = fps
+
+        self._current_inactive_start: Optional[float] = None
+        self._current_inactive_frames = 0
+        self._max_inactive_stretch = 0.0
+        self._keypoint_history: deque = deque(maxlen=self._micro_motion_window)
+        self._events: List[Dict[str, Any]] = []
+
+    def update(
+        self,
+        is_sedentary: bool,
+        timestamp: float,
+        keypoints: Optional[np.ndarray] = None,
+    ) -> Optional[Dict[str, Any]]:
+        if keypoints is not None:
+            self._keypoint_history.append(keypoints.copy())
+
+        if is_sedentary:
+            if self._current_inactive_start is None:
+                self._current_inactive_start = timestamp
+            self._current_inactive_frames += 1
+            return None
+
+        if self._current_inactive_start is not None:
+            result = self._emit_inactive_event(timestamp)
+            self._current_inactive_start = None
+            self._current_inactive_frames = 0
+            return result
+
+        return None
+
+    def _emit_inactive_event(self, current_ts: float) -> Dict[str, Any]:
+        start_ts = self._current_inactive_start or current_ts
+        duration = current_ts - start_ts
+        if duration > self._max_inactive_stretch:
+            self._max_inactive_stretch = duration
+
+        micro_motion = self._compute_micro_motion()
+        warning = duration >= self._warning_threshold
+        triggered = duration >= self._prolonged_threshold
+
+        if duration < self._warning_threshold:
+            confidence = 0.5
+        elif duration < self._prolonged_threshold:
+            confidence = 0.65
+        else:
+            confidence = 0.8 + (1.0 - micro_motion) * 0.15
+
+        result = {
+            "timestamp": current_ts,
+            "time_window": [start_ts, current_ts],
+            "valid_duration": duration,
+            "continuous_inactive_sec": round(duration, 1),
+            "max_inactive_stretch_sec": round(self._max_inactive_stretch, 1),
+            "warning_triggered": warning,
+            "prolonged_triggered": triggered,
+            "keypoint_micro_motion": round(micro_motion, 4),
+            "confidence_score": round(min(0.95, confidence), 4),
+        }
+        self._events.append(result)
+        return result
+
+    def _compute_micro_motion(self) -> float:
+        if len(self._keypoint_history) < 2:
+            return 1.0
+        kps = np.stack(list(self._keypoint_history), axis=0)
+        std_per_kp = np.std(kps[:, :, :2], axis=0)
+        mean_std = np.mean(std_per_kp)
+        normalized = np.clip(mean_std / (self._min_micro_motion_px * 5), 0.0, 1.0)
+        return 1.0 - float(normalized)
+
+    def flush(self, current_ts: float) -> Optional[Dict[str, Any]]:
+        if self._current_inactive_start is not None:
+            return self._emit_inactive_event(current_ts)
+        return None
+
+    @property
+    def events(self) -> List[Dict[str, Any]]:
+        return self._events
+
+    @property
+    def max_inactive_stretch_sec(self) -> float:
+        return self._max_inactive_stretch
+
+    def get_daily_prolonged_count(self) -> int:
+        return sum(1 for e in self._events if e.get("prolonged_triggered", False))
+
+    def reset(self) -> None:
+        self._current_inactive_start = None
+        self._current_inactive_frames = 0
+        self._max_inactive_stretch = 0.0
+        self._keypoint_history.clear()
+        self._events.clear()
+
+
+# ============================================================
+# 5. 昼夜节律偏移分析
+# ============================================================
+
+class CircadianRhythmAnalyzer:
+    """昼夜节律偏移分析器。
+
+    检测原理:
+      1. 定义「起床时间」= 每日首次检测到连续活动的时刻
+      2. 定义「入睡时间」= 每日最后一次活动后持续静止的时刻
+      3. 建立 N 天的个体基线（均值）
+      4. 对比当日数据，计算偏移量（小时）
+    """
+
+    def __init__(
+        self,
+        baseline_window_days: int = 7,
+        offset_warning_hours: float = 2.0,
+        night_start_hour: int = 22,
+        night_end_hour: int = 6,
+        min_active_streak_sec: float = 60.0,
+        min_inactive_for_sleep_sec: float = 1800.0,
+        fps: float = 15.0,
+    ) -> None:
+        self._baseline_window = baseline_window_days
+        self._offset_warning = offset_warning_hours
+        self._night_start = night_start_hour
+        self._night_end = night_end_hour
+        self._min_active_streak = min_active_streak_sec
+        self._min_inactive_for_sleep = min_inactive_for_sleep_sec
+        self._fps = fps
+
+        self._current_day_activity: List[Tuple[float, bool]] = []
+        self._baseline_days: List[Dict[str, Any]] = []
+        self._date: str = "unknown"
+
+    def set_date(self, date: str) -> None:
+        self._date = date
+
+    def feed_hourly(self, hour_of_day: float, is_active: bool) -> None:
+        self._current_day_activity.append((hour_of_day, is_active))
+
+    def analyze(self, date: Optional[str] = None) -> Dict[str, Any]:
+        if date is None:
+            date = self._date
+
+        wake_time, sleep_time = self._detect_sleep_wake()
+        nap_minutes = self._detect_naps(wake_time, sleep_time)
+
+        baseline_wakes = [d.get("wake_time", 8.0) for d in self._baseline_days if d.get("wake_time") is not None]
+        baseline_sleeps = [d.get("sleep_time", 23.0) for d in self._baseline_days if d.get("sleep_time") is not None]
+        baseline_wake_mean = float(np.mean(baseline_wakes)) if baseline_wakes else wake_time
+        baseline_sleep_mean = float(np.mean(baseline_sleeps)) if baseline_sleeps else sleep_time
+
+        wake_offset = abs(wake_time - baseline_wake_mean) if wake_time else 0.0
+        sleep_offset = abs(sleep_time - baseline_sleep_mean) if sleep_time else 0.0
+        disturbed = wake_offset > self._offset_warning or sleep_offset > self._offset_warning
+
+        days_confidence = min(1.0, len(self._baseline_days) / self._baseline_window)
+        confidence = 0.4 + days_confidence * 0.5
+
+        result = {
+            "date": date,
+            "wake_time": round(wake_time, 2),
+            "sleep_time": round(sleep_time, 2),
+            "nap_duration_minutes": round(nap_minutes, 1),
+            "baseline_wake_mean": round(baseline_wake_mean, 2),
+            "baseline_sleep_mean": round(baseline_sleep_mean, 2),
+            "wake_offset_hours": round(wake_offset, 2),
+            "sleep_offset_hours": round(sleep_offset, 2),
+            "is_circadian_disturbed": disturbed,
+            "baseline_days_count": len(self._baseline_days),
+            "confidence_score": round(confidence, 4),
+            "time_window": [0.0, 24.0],
+            "valid_duration": float(len(self._current_day_activity)) / 60.0,
+        }
+        self._baseline_days.append({"date": date, "wake_time": wake_time, "sleep_time": sleep_time})
+        return result
+
+    def _detect_sleep_wake(self) -> Tuple[float, float]:
+        if not self._current_day_activity:
+            return (8.0, 23.0)
+        wake_time, sleep_time = 8.0, 23.0
+        active_streak = 0
+        for hour, active in self._current_day_activity:
+            if active:
+                active_streak += 1
+                if active_streak >= self._min_active_streak / 3600.0:
+                    wake_time = hour - active_streak + 1
+                    break
+            else:
+                active_streak = 0
+        inactive_streak = 0
+        for hour, active in reversed(self._current_day_activity):
+            if not active:
+                inactive_streak += 1
+                if inactive_streak >= self._min_inactive_for_sleep / 3600.0:
+                    sleep_time = hour + inactive_streak - 1
+                    break
+            else:
+                inactive_streak = 0
+        return (wake_time, sleep_time)
+
+    def _detect_naps(self, wake_time: float, sleep_time: float) -> float:
+        nap_total = 0.0
+        in_nap, nap_start = False, 0.0
+        min_nap = 20.0 / 60.0
+        for hour, active in self._current_day_activity:
+            if wake_time <= hour <= sleep_time:
+                if not active and not in_nap:
+                    nap_start, in_nap = hour, True
+                elif active and in_nap:
+                    nap_dur = hour - nap_start
+                    if nap_dur >= min_nap:
+                        nap_total += nap_dur
+                    in_nap = False
+        if in_nap:
+            nap_dur = sleep_time - nap_start
+            if nap_dur >= min_nap:
+                nap_total += nap_dur
+        return nap_total * 60.0
+
+    def reset(self) -> None:
+        self._current_day_activity.clear()
+
+    def reset_baseline(self) -> None:
+        self._baseline_days.clear()
+
+
+# ============================================================
+# 6. 社交互动强度检测
+# ============================================================
+
+class SocialInteractionAnalyzer:
+    """社交互动强度检测器。
+
+    检测原理:
+      1. 多人共现时，计算人体间的空间距离
+      2. 估算朝向角度（基于左右肩连线法向量判断是否面对面）
+      3. 统计近距离共现时长，量化互动强度
+    """
+
+    def __init__(
+        self,
+        close_distance_threshold_px: float = 150.0,
+        facing_angle_threshold_deg: float = 45.0,
+        window_sec: float = 300.0,
+        stride_sec: float = 60.0,
+        fps: float = 15.0,
+    ) -> None:
+        self._close_threshold = close_distance_threshold_px
+        self._facing_angle_threshold = facing_angle_threshold_deg
+        self._window_sec = window_sec
+        self._stride_sec = stride_sec
+        self._fps = fps
+
+        self._frame_records: deque = deque(maxlen=int(window_sec * fps))
+        self._last_check_ts = -stride_sec
+        self._events: List[Dict[str, Any]] = []
+
+    def update(
+        self,
+        keypoints_list: List[np.ndarray],
+        bboxes: np.ndarray,
+        timestamp: float,
+    ) -> Optional[Dict[str, Any]]:
+        N = len(keypoints_list)
+        record = {"timestamp": timestamp, "person_count": N}
+
+        if N >= 2:
+            distances, facing_pairs, total_pairs = [], 0, 0
+            for i in range(N):
+                for j in range(i + 1, N):
+                    total_pairs += 1
+                    ci = self._get_centroid(keypoints_list[i])
+                    cj = self._get_centroid(keypoints_list[j])
+                    dist = np.linalg.norm(ci - cj) if ci is not None and cj is not None else float("inf")
+                    distances.append(dist)
+                    if self._is_facing(keypoints_list[i], keypoints_list[j]):
+                        facing_pairs += 1
+            record.update({
+                "min_distance_px": float(min(distances)) if distances else 0.0,
+                "avg_distance_px": float(np.mean(distances)) if distances else 0.0,
+                "facing_ratio": facing_pairs / total_pairs if total_pairs > 0 else 0.0,
+                "is_close": min(distances) < self._close_threshold if distances else False,
+            })
+        else:
+            record.update({"min_distance_px": 0.0, "avg_distance_px": 0.0, "facing_ratio": 0.0, "is_close": False})
+
+        self._frame_records.append(record)
+        if timestamp - self._last_check_ts >= self._stride_sec:
+            self._last_check_ts = timestamp
+            return self._analyze(timestamp)
+        return None
+
+    def _analyze(self, current_ts: float) -> Dict[str, Any]:
+        records = list(self._frame_records)
+        window_start = current_ts - self._window_sec
+        multi = [r for r in records if r["person_count"] >= 2]
+        n_multi, n_total = len(multi), len(records)
+
+        if n_multi == 0:
+            return {"timestamp": current_ts, "time_window": [window_start, current_ts],
+                    "valid_duration": self._window_sec, "avg_distance_px": 0.0,
+                    "facing_each_other_ratio": 0.0, "close_proximity_sec": 0.0,
+                    "interaction_intensity": 0.0, "confidence_score": 0.3}
+
+        avg_dist = float(np.mean([r["avg_distance_px"] for r in multi]))
+        facing_ratio = float(np.mean([r["facing_ratio"] for r in multi]))
+        close_frames = sum(1 for r in multi if r["is_close"])
+        close_sec = close_frames / self._fps
+
+        presence_ratio = n_multi / n_total if n_total > 0 else 0
+        proximity_score = max(0.0, 1.0 - avg_dist / self._close_threshold)
+        intensity = 0.3 * presence_ratio + 0.35 * proximity_score + 0.35 * facing_ratio
+        confidence = 0.5 + presence_ratio * 0.4
+
+        result = {
+            "timestamp": current_ts, "time_window": [window_start, current_ts],
+            "valid_duration": self._window_sec, "avg_distance_px": round(avg_dist, 1),
+            "facing_each_other_ratio": round(facing_ratio, 4),
+            "close_proximity_sec": round(close_sec, 1),
+            "interaction_intensity": round(min(1.0, intensity), 4),
+            "confidence_score": round(min(0.95, confidence), 4),
+        }
+        self._events.append(result)
+        return result
+
+    def _get_centroid(self, kps: np.ndarray) -> Optional[np.ndarray]:
+        if kps[11, 2] > 0.1 and kps[12, 2] > 0.1:
+            return (kps[11, :2] + kps[12, :2]) / 2.0
+        mask = kps[:, 2] > 0.3
+        if mask.any():
+            return kps[mask, :2].mean(axis=0)
+        return None
+
+    def _is_facing(self, kps_a: np.ndarray, kps_b: np.ndarray) -> bool:
+        if kps_a[5, 2] < 0.2 or kps_a[6, 2] < 0.2:
+            return False
+        if kps_b[5, 2] < 0.2 or kps_b[6, 2] < 0.2:
+            return False
+        shoulder_a = kps_a[6, :2] - kps_a[5, :2]
+        shoulder_b = kps_b[6, :2] - kps_b[5, :2]
+        center_a = (kps_a[5, :2] + kps_a[6, :2]) / 2.0
+        center_b = (kps_b[5, :2] + kps_b[6, :2]) / 2.0
+        ab = center_b - center_a
+        ab_norm = np.linalg.norm(ab)
+        if ab_norm < 1e-6:
+            return False
+        ab = ab / ab_norm
+        facing_a = np.array([-shoulder_a[1], shoulder_a[0]])
+        fa_norm = np.linalg.norm(facing_a)
+        if fa_norm < 1e-6:
+            return False
+        facing_a = facing_a / fa_norm
+        facing_b = np.array([-shoulder_b[1], shoulder_b[0]])
+        fb_norm = np.linalg.norm(facing_b)
+        if fb_norm < 1e-6:
+            return False
+        facing_b = facing_b / fb_norm
+        cos_a = np.dot(facing_a, ab)
+        cos_b = np.dot(facing_b, -ab)
+        angle_a_deg = np.degrees(np.arccos(np.clip(cos_a, -1, 1)))
+        angle_b_deg = np.degrees(np.arccos(np.clip(cos_b, -1, 1)))
+        return angle_a_deg < self._facing_angle_threshold and angle_b_deg < self._facing_angle_threshold
+
+    @property
+    def events(self) -> List[Dict[str, Any]]:
+        return self._events
+
+    def get_daily_avg_intensity(self) -> float:
+        if not self._events:
+            return 0.0
+        return float(np.mean([e["interaction_intensity"] for e in self._events]))
+
+    def reset(self) -> None:
+        self._frame_records.clear()
+        self._events.clear()
+        self._last_check_ts = -self._stride_sec

@@ -189,4 +189,25 @@
   - 徘徊检测需在真实视频上验证（当前模拟数据测试）
   - 重复动作检测的热点聚类半径需根据实际场景标定
   - A2 Batch 2 待实现：异常久坐、昼夜节律、社交互动
+
+---
+
+### [2026-07-16] - A2 Batch 2：异常久坐 + 昼夜节律 + 社交互动检测器
+
+* **当前操作动作**：追加 3 个专项检测器到 `special_behavior.py`
+* **核心变更说明**：
+  1. `ProlongedInactivityDetector`：跟踪连续静止帧数，超 1h 预警 / 2h 触发警示，结合骨骼关键点标准差做微动分析（完全静止=高风险）
+  2. `CircadianRhythmAnalyzer`：从活动/静止序列检测起床/入睡时间，建立 N 天个体基线，计算偏移量（超 2h 标记节律异常），检测午休时长
+  3. `SocialInteractionAnalyzer`：多人场景下计算空间距离 + 朝向角度（肩线法向量）+ 近距离时长，加权输出互动强度 (0-1)
+  4. 所有输出均包含 `time_window`、`valid_duration`、`confidence_score`（§A2 质量要求）
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/special_behavior.py` (Modified, +414 lines, 830 total)
+* **执行结果与验证状态**：
+  - ProlongedInactivityDetector：连续静止检测 + 微动分析正常
+  - CircadianRhythmAnalyzer：模拟一天数据，正确检测 6:00 起床 / 23:54 入睡 / 108min 午休
+  - SocialInteractionAnalyzer：双人面对面场景交互强度计算正常
+* **置信度或遗留待办（TODO）**：
+  - 昼夜节律需多天数据才能建立有效基线（当前置信度低）
+  - 社交朝向角度依赖肩部关键点——桌子遮挡时精度下降
+  - A2 Batch 3 待实现：SpecialBehaviorDetector 总装 + 单元测试 + GPU 验证
 ---
