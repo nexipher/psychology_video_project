@@ -1,0 +1,44 @@
+{
+  "batch_name": "batch_20260716_145408",
+  "workers": 2,
+  "total_videos": 4,
+  "total_time_sec": 20.1,
+  "results": [
+    {
+      "video": "test1",
+      "worker": 0,
+      "status": "ok",
+      "file": "test1_20260716_145412.json",
+      "copy_sec": 0.1,
+      "run_sec": 10.1,
+      "summary": "active=0.0min sed=0.00 rep_path=0 inactive=0 social=0.00"
+    },
+    {
+      "video": "test2",
+      "worker": 1,
+      "status": "ok",
+      "file": "test2_20260716_145412.json",
+      "copy_sec": 0.0,
+      "run_sec": 9.5,
+      "summary": "active=0.0min sed=0.00 rep_path=0 inactive=0 social=0.00"
+    },
+    {
+      "video": "test3",
+      "worker": 0,
+      "status": "ok",
+      "file": "test3_20260716_145421.json",
+      "copy_sec": 0.0,
+      "run_sec": 9.8,
+      "summary": "active=0.0min sed=0.00 rep_path=0 inactive=0 social=0.00"
+    },
+    {
+      "video": "test4",
+      "worker": 1,
+      "status": "ok",
+      "file": "test4_20260716_145422.json",
+      "copy_sec": 0.0,
+      "run_sec": 9.5,
+      "summary": "active=0.0min sed=0.00 rep_path=0 inactive=0 social=0.00"
+    }
+  ]
+}

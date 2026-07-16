@@ -1,0 +1,15 @@
+{
+  "user_id": "test3",
+  "date": "2026-07-16",
+  "daily_metrics": {
+    "active_minutes": 0.08,
+    "sedentary_ratio": 0.4178,
+    "room_transition_count": 0,
+    "night_activity_count": 0,
+    "social_interaction_minutes": 0.0,
+    "repetitive_path_count": 0,
+    "movement_speed": 0.0223,
+    "coverage_minutes": 0.14,
+    "feature_confidence": 0.811
+  }
+}
