@@ -466,4 +466,39 @@
 * **置信度或遗留待办（TODO）**：
   - P10T07C04 的 repetitive_behavior evidence 描述与 same_route 标签不完全匹配（说"起身坐下"而非"来回走动"），可能是 16 帧采样不足以捕获完整行为周期
   - 两个视频的 A1 指标仍存在不同程度噪声，后续需要对 A1 特征提取算法进行系统性调参
+
+---
+
+### [2026-07-20] - plan.md 更新 v5.0 + A3 实时化改造 Step 1
+
+* **当前操作动作**：制定 A3 实时化改造完整计划，同步 §6.2 Schema 新增 cooling_period / num_of_occurrences 字段
+* **核心变更说明**：
+  1. **plan.md 更新至 v5.0**：
+     - 新增第十一章「A3 实时化改造计划」，含 9 个子章节
+     - 冷却期设计：repetitive_behavior=60s, social_interaction=120s, long_inactivity=120s
+     - A3EventDispatcher 设计：管理冷却期状态、触发计数、MLLM 调用调度
+     - A2 检测器改造：共享冷却期（RepetitivePath + RepeatedAction → 同一个 repetitive_behavior）、人物离画暂停机制
+     - A2→A3 事件映射表（5 检测器 → 3 event_types），CircadianRhythmAnalyzer 不参与实时触发
+     - YOLO+Qwen 共驻显存策略（合计 ~15.5GB/23.5GB）
+     - 输出 JSON 结构变化：同 event_type 可多条记录，start_sec/end_sec 为视频内实际时间戳
+  2. **Step 1 — §6.2 Schema 同步**：
+     - `schema_validator.py`：`QWEN_VL_EVENT_SCHEMA` 新增 `cooling_period` (enum [60,120]) + `num_of_occurrences` (integer >=0)
+     - `mllm_prompts.yaml`：三个 Prompt 输出格式均加入新字段（repetitive=60, social=120, inactivity=120）
+     - `mllm_verifier.py`：8 个 Mock 响应 + 兜底 + safe_default 全部补全
+     - `test_schema_validator.py`：5 个 fixture 更新适配
+  3. **关键设计确认**：
+     - `num_of_occurrences` 由 A3EventDispatcher 填入（覆盖 MLLM 返回值），MLLM 固定输出 1
+     - 冷却期内仅累加 _pending_count，不调 MLLM
+     - 人物离开画面 → 检测器暂停，冷却期状态保持，回来从零重新积累
+* **涉及/修改的文件清单**：
+  - `plan.md` (Modified — v5.0 + 第十一章 A3 实时化改造计划)
+  - `src/utils/schema_validator.py` (Modified — +cooling_period, +num_of_occurrences)
+  - `configs/mllm_prompts.yaml` (Modified — 3 prompts +新字段)
+  - `src/video_analysis/mllm_verifier.py` (Modified — mocks + safe_default +新字段)
+  - `tests/test_schema_validator.py` (Modified — 5 fixtures)
+* **执行结果与验证状态**：165/165 全量测试通过
+* **置信度或遗留待办（TODO）**：
+  - Step 2: 创建 `A3EventDispatcher` + 冷却期单元测试
+  - Step 3: A2 检测器加回调钩子
+  - Step 4: 创建流式管线脚本
 ---
