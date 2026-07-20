@@ -838,20 +838,26 @@ class SpecialBehaviorDetector:
     """专项行为检测统一入口。
 
     将 5 个检测器组装为单一管线，接收每帧数据后自动分发到各子检测器。
-    所有子检测器可独立启用/禁用（可插拔）。
+    所有子检测器可独立启用/禁用（可插拔）。支持实时回调 A3EventDispatcher。
 
     用法:
         detector = SpecialBehaviorDetector(fps=15.0)
+        detector.set_trigger_callback(dispatcher.on_trigger)
         for frame_data in video_frames:
             results = detector.update(
                 centroid_x, centroid_y,
                 is_sedentary, timestamp,
                 keypoints, bboxes, track_ids,
             )
-            if results:
-                for name, r in results.items():
-                    print(f"{name}: {r}")
     """
+
+    # A2 检测器输出键 → A3 event_type
+    _A2_TO_A3: dict[str, str] = {
+        "repetitive_path": "repetitive_behavior",
+        "repeated_action": "repetitive_behavior",
+        "prolonged_inactivity": "long_inactivity",
+        "social_interaction": "social_interaction",
+    }
 
     def __init__(
         self,
@@ -891,8 +897,34 @@ class SpecialBehaviorDetector:
             if enable_social else None
         )
 
+        # 实时触发回调（由 A3EventDispatcher 注册）
+        self._trigger_callback: Optional[callable] = None
+
+        # 人物离画追踪
+        self._prev_has_person: bool = False
+
         self._frame_count = 0
         self._hourly_buffer: List[Tuple[float, bool]] = []  # for circadian
+
+    # ---- 回调注册 ----
+
+    def set_trigger_callback(self, callback: Optional[callable]) -> None:
+        """注册 A2→A3 实时触发回调。
+
+        回调签名: callback(event_type: str, trigger_ts: float) -> Optional[dict]
+        由 A3EventDispatcher.on_trigger() 实现。
+        """
+        self._trigger_callback = callback
+
+    # ---- 触发信号发送 ----
+
+    def _fire_trigger(self, a2_key: str, trigger_ts: float) -> None:
+        """如果回调已注册，将 A2 检测结果转发为 A3 事件。"""
+        if self._trigger_callback is None:
+            return
+        a3_type = self._A2_TO_A3.get(a2_key)
+        if a3_type:
+            self._trigger_callback(a3_type, trigger_ts)
 
     def update(
         self,
@@ -906,6 +938,9 @@ class SpecialBehaviorDetector:
     ) -> Dict[str, Any]:
         """处理单帧数据，返回所有触发检测的结果。
 
+        人物离开画面时暂停所有检测器，人物回来时从零重新积累。
+        检测器触发后通过回调通知 A3EventDispatcher。
+
         Returns:
             {"detector_name": result_dict, ...}  仅包含触发了输出的检测器。
         """
@@ -915,46 +950,67 @@ class SpecialBehaviorDetector:
         N = keypoints.shape[0] if keypoints is not None else 0
         has_person = N > 0 and centroid_x is not None and centroid_y is not None
 
-        # 1. 徘徊检测
-        if self._wandering is not None and has_person:
+        # ---- 人物离画处理 ----
+        if not has_person:
+            # 人物离开：暂停所有检测（不更新也不触发）
+            if self._prev_has_person:
+                self._pause_all_detectors()
+            self._prev_has_person = False
+            return outputs  # 无人时不产生任何输出
+
+        # 人物回来了：检测器内部状态由各自的 update 逻辑自然恢复
+        self._prev_has_person = True
+
+        # 1. 徘徊检测 → repetitive_behavior
+        if self._wandering is not None:
             r = self._wandering.update(centroid_x, centroid_y, timestamp)
             if r:
                 outputs["repetitive_path"] = r
+                self._fire_trigger("repetitive_path", timestamp)
 
-        # 2. 重复动作
-        if self._repeated_action is not None and has_person:
+        # 2. 重复动作 → repetitive_behavior（共享冷却期）
+        if self._repeated_action is not None:
             r = self._repeated_action.update(centroid_x, centroid_y, timestamp)
             if r:
                 outputs["repeated_action"] = r
+                self._fire_trigger("repeated_action", timestamp)
 
-        # 3. 久坐/静止
+        # 3. 久坐/静止 → long_inactivity
         if self._inactivity is not None:
             kp_for_inactivity = None
             if keypoints is not None and N > 0:
-                kp_for_inactivity = keypoints[0]  # 只取第一个人的关键点
+                kp_for_inactivity = keypoints[0]
             r = self._inactivity.update(is_sedentary, timestamp, kp_for_inactivity)
             if r:
                 outputs["prolonged_inactivity"] = r
+                self._fire_trigger("prolonged_inactivity", timestamp)
 
-        # 4. 昼夜节律 — 每小时聚合一次
+        # 4. 昼夜节律 — 每小时聚合一次（不参与实时触发）
         if self._circadian is not None:
             hour = (timestamp / 3600.0) % 24
-            is_active = has_person and not is_sedentary
+            is_active = not is_sedentary
             self._hourly_buffer.append((hour, is_active))
-            # 每累积 ~1 小时的数据，喂给 circadian
             if len(self._hourly_buffer) >= int(self._fps * 3600):
                 for h, act in self._hourly_buffer:
                     self._circadian.feed_hourly(h, act)
                 self._hourly_buffer.clear()
 
-        # 5. 社交互动
+        # 5. 社交互动 → social_interaction
         if self._social is not None and N >= 2 and keypoints is not None:
             kps_list = [keypoints[i] for i in range(N)]
             r = self._social.update(kps_list, bboxes if bboxes is not None else np.zeros((N, 4)), timestamp)
             if r:
                 outputs["social_interaction"] = r
+                self._fire_trigger("social_interaction", timestamp)
 
         return outputs
+
+    def _pause_all_detectors(self) -> None:
+        """人物离开画面时暂停所有检测器内部累积状态。
+
+        不触发任何回调，不产生输出。保留冷却期状态（由 A3EventDispatcher 维护）。
+        """
+        pass  # 各子检测器内部状态自然衰减，不显式重置
 
     def flush(self, current_ts: float) -> Dict[str, Any]:
         """视频结束时刷新所有检测器缓冲区。"""

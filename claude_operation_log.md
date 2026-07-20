@@ -528,4 +528,32 @@
 * **执行结果与验证状态**：18/18 新增通过；全量 183/183 passed
 * **置信度或遗留待办（TODO）**：
   - Step 3: A2 检测器加回调钩子 + 人物离画暂停逻辑
+
+---
+
+### [2026-07-20] - [Plan §11.5] Step 3：A2 检测器回调钩子 + 人物离画处理
+
+* **当前操作动作**：为 SpecialBehaviorDetector 添加 A3 实时触发回调机制 + 人物离画暂停逻辑
+* **对应计划锚点**：实现 plan.md §11.5 A2 检测器改造点 + §11.5.1 共享冷却期 + §11.5.2 人物离开画面处理
+* **核心变更说明**：
+  1. **A2→A3 事件映射**（`_A2_TO_A3` 类常量）：
+     - `repetitive_path` → `repetitive_behavior`
+     - `repeated_action` → `repetitive_behavior`（共享冷却期）
+     - `prolonged_inactivity` → `long_inactivity`
+     - `social_interaction` → `social_interaction`
+     - `circadian` 不参与实时触发
+  2. **回调注册**：`set_trigger_callback(callback)` — 由 A3EventDispatcher.on_trigger 注册
+  3. **触发信号发送**：`_fire_trigger(a2_key, trigger_ts)` — 当检测器返回结果时自动调用回调
+  4. **人物离画处理**：
+     - `_prev_has_person` 追踪画面人物状态
+     - 人物离开时 → 调用 `_pause_all_detectors()`，不产生任何输出，不触发 MLLM
+     - 人物回来时 → 各子检测器内部状态自然恢复（`_still_start` 等由各自的 update 逻辑重置）
+     - 冷却期状态不受影响（由 A3EventDispatcher 独立维护）
+  5. **update() 方法**：每个检测器触发后立即 `_fire_trigger()`，不等待帧结束
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/special_behavior.py` (Modified — +callback, +person tracking, +A2→A3 mapping)
+* **执行结果与验证状态**：33/33 A2 tests + 18/18 EventDispatcher tests 通过；155/155 non-MLLM tests 通过
+* **置信度或遗留待办（TODO）**：
+  - Step 4: 创建流式管线脚本，串联 A1+YOLO+A2+Dispatcher+A3+Qwen
+  - 当前 _pause_all_detectors() 为空实现（检测器内部状态自然衰减），后续可在检测器层面实现显式 pause/reset
 ---
