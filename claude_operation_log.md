@@ -501,4 +501,31 @@
   - Step 2: 创建 `A3EventDispatcher` + 冷却期单元测试
   - Step 3: A2 检测器加回调钩子
   - Step 4: 创建流式管线脚本
+
+---
+
+### [2026-07-20] - [Plan §11.4] Step 2：A3EventDispatcher + 冷却期单元测试
+
+* **当前操作动作**：创建 A3EventDispatcher 实时事件调度器 + 18 个单元测试
+* **对应计划锚点**：实现 plan.md §11.3 冷却期状态机 + §11.4 A3EventDispatcher 设计
+* **核心变更说明**：
+  1. **`event_dispatcher.py`** — `A3EventDispatcher` 类：
+     - 三个事件类型冷却期：repetitive=60s, social=120s, inactivity=120s
+     - `on_trigger(event_type, trigger_ts)`：冷却期内累加 `_pending_count` 返回 None；冷却期外调 MLLM.verify()，用累加值覆盖 result["num_of_occurrences"]
+     - 多 event_type 独立冷却期（`_cooldown_until` dict）
+     - `get_cooldown_status(event_type?)` 查询冷却期状态
+     - `flush()` 返回并清空结果列表（幂等），`reset()` 清空所有状态
+     - `total_mllm_calls` / `total_triggers` 属性
+  2. **`test_event_dispatcher.py`** — 18 个测试（Mock verify 避免真实视频 IO）：
+     - TestCooldown（4）：首次触发调MLLM、冷却期返回None、冷却期后再触发、冷却边界
+     - TestPendingCount（3）：单次计数=1、多次累加、MLLM后重置
+     - TestIndependentCooldowns（3）：不同类型独立冷却、三种类型全触发、冷却期值正确
+     - TestLifecycle（5）：flush返回并清空、flush幂等、reset全清、单/全状态查询
+     - TestEdgeCases（3）：无效event_type抛异常、total_triggers统计、repr
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/event_dispatcher.py` (Created)
+  - `tests/test_event_dispatcher.py` (Created)
+* **执行结果与验证状态**：18/18 新增通过；全量 183/183 passed
+* **置信度或遗留待办（TODO）**：
+  - Step 3: A2 检测器加回调钩子 + 人物离画暂停逻辑
 ---
