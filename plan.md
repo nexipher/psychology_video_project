@@ -476,4 +476,270 @@ is_standing = NOT is_truly_sedentary
 
 ---
 
-> 📋 计划版本: v4.0 | 更新日期: 2026-07-20 | 基于: `video_tasks.md` + `agent.md`
+## 十一、A3 实时化改造计划
+
+### 11.1 改造目标
+
+将 A3 从「视频结束后批量扫描日级汇总」改为「逐帧监听 A2 信号，实时触发 MLLM 复核」。
+
+```
+改造前 (batch):
+  视频播完 → get_daily_summary() → generate_mllm_triggers() → 逐个 MLLM
+
+改造后 (streaming):
+  每帧 → A2 检测器内部判定 → 触发信号 → A3EventDispatcher → 检查冷却期 → 实时 MLLM
+```
+
+### 11.2 改造范围
+
+| 模块 | 改造内容 | 优先级 |
+|:---|:---|:---|
+| `schema_validator.py` | §6.2 Schema 新增 `cooling_period` + `num_of_occurrences` | P0 |
+| `mllm_prompts.yaml` | 三个 Prompt 的 Output Format 同步新增两个字段 | P0 |
+| `mllm_verifier.py` | Mock 响应 + safe_default 补全新字段；`_inference_real` 输出包含新字段 | P0 |
+| `special_behavior.py` | 每个子检测器新增冷却期状态 + 触发回调钩子 | P1 |
+| **新文件** `event_dispatcher.py` | `A3EventDispatcher`：冷却期检查、MLLM 调用调度、事件队列管理 | P1 |
+| **新脚本** `run_streaming_pipeline.py` | 流式管线：YOLO+Qwen 共驻、逐帧 A1→A2→A3 | P1 |
+| `run_a1_a3_pipeline.py` | 旧的 batch 模式保留不变，新脚本独立 | — |
+| `tests/` | 新增冷却期逻辑单测 + A3EventDispatcher 单测 + 流式集成测试 | P2 |
+
+### 11.3 冷却期状态机
+
+```
+A2 触发 ──→ 检查 _cooldown_until[event_type]
+                │
+    未在冷却期 ──┴── 正在冷却期
+         │                 │
+  1. 记录 trigger_ts    累加 _pending_count[event_type]++
+  2. 标记冷却期开始      不调用 MLLM（跳过）
+  3. _pending_count = 1
+  4. 调用 MLLM.verify()
+  5. MLLM 返回后，用 _pending_count 覆盖 result["num_of_occurrences"]
+  6. 重置 _pending_count = 0
+```
+
+**`num_of_occurrences` 语义**：
+
+- 首次 A2 触发 → 调 MLLM，`num_of_occurrences` 填的是本次触发 + 之前累积未上报的次数
+- 冷却期内 → 不调 MLLM，仅累加 `_pending_count`
+- 冷却期结束后再次触发 → 新一轮 MLLM 调用，`num_of_occurrences` 包含本轮冷却期内累积的所有次数
+- Qwen2.5-VL 只看 16 帧画面，无法感知冷却期次数 → MLLM 返回后由 `A3EventDispatcher` 覆盖该字段
+
+### 11.4 A3EventDispatcher 设计
+
+```python
+class A3EventDispatcher:
+    """A2→A3 实时事件调度器。
+
+    职责：
+    1. 持有 MLLMVerifier 引用（Qwen 已加载，驻留显存）
+    2. 接收 A2 触发信号 (event_type, trigger_ts)
+    3. 检查冷却期，决定是否调用 MLLM
+    4. 管理事件队列，收集所有 MLLM 复核结果
+    """
+
+    COOLDOWN = {
+        "repetitive_behavior": 60,   # 秒
+        "social_interaction": 120,
+        "long_inactivity": 120,
+    }
+
+    def __init__(self, verifier: MLLMVerifier, video_path: str):
+        self._verifier = verifier           # Qwen 已加载
+        self._video_path = video_path
+        self._cooldown_until: dict[str, float] = {}   # event_type → 冷却结束时间戳
+        self._pending_count: dict[str, int] = {}       # event_type → 冷却期内累计触发次数
+        self._results: list[dict] = []                # 收集所有 MLLM 结果
+
+    def on_trigger(self, event_type: str, trigger_ts: float) -> Optional[dict]:
+        """A2 检测器触发回调。
+
+        冷却期内：仅递增 _pending_count，返回 None
+        冷却期外：调用 MLLM，用 _pending_count 覆盖 result["num_of_occurrences"]
+        """
+        now = trigger_ts
+
+        # 累加触发计数（冷却期内或首次触发都计入）
+        self._pending_count[event_type] = self._pending_count.get(event_type, 0) + 1
+
+        if event_type in self._cooldown_until and now < self._cooldown_until[event_type]:
+            return None  # 冷却期内，仅计数
+
+        # 冷却期外：设置冷却期，调用 MLLM
+        cooldown = self.COOLDOWN.get(event_type, 60)
+        self._cooldown_until[event_type] = now + cooldown
+
+        result = self._verifier.verify(
+            video_path=self._video_path,
+            event_type=event_type,
+            trigger_ts=trigger_ts,
+        )
+        result["cooling_period"] = cooldown
+        result["num_of_occurrences"] = self._pending_count[event_type]  # 覆盖 MLLM 返回值
+        self._pending_count[event_type] = 0  # 重置计数器
+
+        self._results.append(result)
+        return result
+
+    def flush(self) -> list[dict]:
+        """返回所有已收集的 MLLM 复核结果。"""
+        return self._results
+```
+
+### 11.5 A2 检测器改造点
+
+每个需实时触发的子检测器增加：
+
+```python
+self._trigger_callback: Optional[Callable] = None   # 对外回调钩子
+```
+
+`_trigger_callback` 签名统一为 `(event_type: str, trigger_ts: float) → None`，调用方只负责通知「发生了异常」，计次和冷却期判断由 `A3EventDispatcher.on_trigger()` 内部完成。
+
+**以 `RepeatedActionDetector` 为例**：
+
+```python
+def update(self, centroid_x, centroid_y, timestamp):
+    # ... 原有逻辑 ...
+    if hotspot_detected:
+        if self._trigger_callback:
+            self._trigger_callback("repetitive_behavior", timestamp)
+```
+
+#### 11.5.1 `repetitive_behavior` 共享冷却期
+
+`RepetitivePathDetector`（徘徊）和 `RepeatedActionDetector`（热点动作）映射到同一个 MLLM `event_type = "repetitive_behavior"`，二者**共享**一个 60s 冷却期。
+
+```
+RepetitivePathDetector  ──→ callback("repetitive_behavior", ts)
+RepeatedActionDetector   ──→ callback("repetitive_behavior", ts)
+                                    │
+                          A3EventDispatcher.on_trigger("repetitive_behavior", ts)
+                                    │
+                          检查 _cooldown_until["repetitive_behavior"]
+```
+
+任一个检测器触发 → 两个检测器同时进入 60s 冷却。MLLM 的 Prompt 本身会区分 `same_route` vs `repeated_search`，无需 A2 侧做区分。
+
+#### 11.5.2 人物离开画面处理
+
+当 `person_count == 0`（画面中无人）时，所有检测器：
+
+- **暂停累积**：不产生新触发信号
+- **不重置已有计数**：`A3EventDispatcher._pending_count` 和 `_cooldown_until` 保持不变
+- **人物回来时**：从零重新累积检测器内部状态（`_still_start` 归零、`recent_positions` 清空等），但冷却期状态不受影响
+
+```python
+# SpecialBehaviorDetector.update() 中
+if centroid_x is None:  # 无人
+    self._pause_all_detectors()
+    return  # 不调用任何 _trigger_callback
+```
+
+#### 11.5.3 A2 检测器 → A3 event_type 映射
+
+| A2 检测器 | A3 event_type | 冷却期 | 触发条件 |
+|:---|:---|:---|:---|
+| `RepetitivePathDetector` | `repetitive_behavior` | 60s | 10min 窗口内同一条边出现 ≥3 次 + 重合度 >40% |
+| `RepeatedActionDetector` | `repetitive_behavior` | 60s（共享）| 同一网格区域 10min 内进出 ≥4 次 |
+| `SocialInteractionAnalyzer` | `social_interaction` | 120s | 加权社交强度 > 0.3 |
+| `ProlongedInactivityDetector` | `long_inactivity` | 120s | 连续静止 ≥2h（1h 预警告不触发 MLLM）|
+| `CircadianRhythmAnalyzer` | — | — | 不参与实时触发（需要多日基线，仅在日终汇总输出）|
+
+### 11.6 YOLO + Qwen 共驻显存策略
+
+```
+Pipeline 启动:
+  1. 加载 YOLOv8n-pose     → ~45 MB VRAM
+  2. 加载 Qwen2.5-VL-7B    → ~15.5 GB VRAM
+  3. 创建 A3EventDispatcher(verifier, video_path)
+  4. 注册回调到 A2 检测器
+
+主循环 (逐帧):
+  1. YOLO 推理 → keypoints, bboxes
+  2. ByteTrack → track_ids
+  3. A1 feature_extractor.process_frame()
+  4. A2 behavior.update() → 内部检测 → 触发回调 → A3EventDispatcher.on_trigger()
+  5. （A3 推理异步或同步，见 11.7）
+
+收尾:
+  1. A2 behavior.flush()
+  2. A3EventDispatcher.flush() → 收集所有 MLLM 结果
+  3. 保存合并 JSON
+```
+
+### 11.7 同步 vs 异步推理
+
+| 方案 | 优点 | 缺点 | 决定 |
+|:---|:---|:---|:---|
+| 同步（A3 推理期间阻塞 A2） | 简单，无需队列 | 推理 10s 期间丢失帧检测 | ❌ |
+| 异步（A3 推理时 A2 继续检测） | 不丢检测 | 需要线程安全 + 队列 | ❌ |
+
+**最终决定**：采用冷却期机制后，同类型事件 60-120s 才可能触发一次 MLLM，10s 推理时间相对于冷却期很短，且不同类型的事件冷却期独立。**采用同步方式**——MLLM 推理时继续逐帧处理 A1+A2，仅在 `on_trigger()` 实际调用 MLLM 时短暂阻塞主循环 ~10s，且 60-120s 才可能阻塞一次，不影响整体吞吐。
+
+### 11.8 输出 JSON 结构变化
+
+改造前（batch，单次汇总）：
+```json
+{
+  "daily_metrics": { ... },
+  "a2_special_behavior": { ... },
+  "a3_mllm_verification": [
+    { "event_type": "repetitive_behavior", ... },
+    { "event_type": "social_interaction", ... }
+  ]
+}
+```
+
+改造后（streaming，同类型可多次出现）：
+```json
+{
+  "daily_metrics": { ... },
+  "a2_special_behavior": { ... },
+  "a3_mllm_verification": [
+    {
+      "event_type": "repetitive_behavior",
+      "cooling_period": 60,
+      "num_of_occurrences": 3,
+      "start_sec": 120.0,
+      "end_sec": 135.0,
+      ...
+    },
+    {
+      "event_type": "repetitive_behavior",
+      "cooling_period": 60,
+      "num_of_occurrences": 2,
+      "start_sec": 195.0,
+      "end_sec": 210.0,
+      ...
+    },
+    {
+      "event_type": "social_interaction",
+      "cooling_period": 120,
+      "num_of_occurrences": 1,
+      "start_sec": 300.0,
+      "end_sec": 315.0,
+      ...
+    }
+  ]
+}
+```
+
+- `start_sec` / `end_sec` 为异常点在实际视频中的时间戳（00:00:00 起始）
+- 同一 `event_type` 可在冷却期结束后再次触发，产生多条记录
+- `num_of_occurrences` 反映了冷却期内 A2 检测到的异常次数
+
+### 11.9 改造步骤
+
+| Step | 内容 | 产出 | 验收 |
+|:---|:---|:---|:---|
+| 1 | 更新 §6.2 Schema + Prompts + Mocks | `schema_validator.py`, `mllm_prompts.yaml`, `mllm_verifier.py` 同步新增两字段 | 28 tests 通过 + 新字段可解析 |
+| 2 | 创建 `A3EventDispatcher` | `src/video_analysis/event_dispatcher.py` | 冷却期逻辑单元测试 |
+| 3 | A2 检测器加回调钩子 + 冷却期计数器 | `special_behavior.py` 5 个检测器 | 33 tests 通过 + 回调触发测试 |
+| 4 | 创建流式管线脚本 | `scripts/run_streaming_pipeline.py` | 与 batch 模式对比，结果一致性 |
+| 5 | 单视频 GPU 验证 | P14T14C06 流式跑通 | JSON 包含 `start_sec`/`end_sec` 实际时间戳 |
+| 6 | 10 视频全量 GPU 跑批 | 全量 A1+A2+A3 输出 | 所有视频有 MLLM 复核结果 |
+
+---
+
+> 📋 计划版本: v5.0 | 更新日期: 2026-07-20 | 基于: `video_tasks.md` + `agent.md`
