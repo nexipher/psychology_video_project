@@ -9,11 +9,15 @@
 
 | 项目 | 状态 |
 |:---|:---|
-| 源代码 (`src/video_analysis/`) | 已清空，需从头搭建 |
-| 测试 (`tests/`) | 已清空，需从头编写 |
-| README | 空白，待填充 |
-| 操作日志 | 空白，待启用 |
-| 数据集 (`/dataset/`) | 尚未挂载到当前实例 |
+| 环境 | Python 3.12 + PyTorch 2.5.1+cu124 + CUDA 12.4 |
+| GPU | NVIDIA RTX 4090 (23.5 GB VRAM) |
+| 数据集 | `dataset/Videos_mp4/` 10 个视频；Toyota Smarthome 压缩包（暂不解压） |
+| A1 | ✅ 全部完成，104 tests |
+| A2 | ✅ 全部完成，33 tests |
+| A3 | ✅ Mock 完成 + GPU 验证通过（P14T14C06, P10T07C04），28 tests |
+| A4 | ❌ 未开始 |
+| README | ✅ 已完成 v4.0 |
+| 操作日志 | ✅ 持续更新 |
 
 ---
 
@@ -122,21 +126,85 @@ psychology_video_project/
 
 ### 第 5 天：任务 A3 — Qwen2.5-VL-7B 事件驱动复核引擎
 
-**目标**：事件触发后截取 10–30s 关键片段或 8–24 帧，送入 Qwen2.5-VL 进行语义复核。
+**目标**：A2 检测器触发异常后，实时调用 Qwen2.5-VL 进行语义复核。支持冷却期机制，同一类型事件冷却期内仅计数不调用 MLLM。
 
-| # | 子任务 | 产出 | 验收标准 |
+| # | 子任务 | 产出 | 状态 |
 |:--|:---|:---|:---|
-| A3.1 | `frame_sampler.py` | 视频均匀帧采样器 | 支持固定帧数（8/16/24）均匀采样，兼容 Trimmed RGB 短视频 |
-| A3.2 | `mllm_prompts.yaml` | System Prompt 模板（含 Few-Shot 示例） | 封闭标签、JSON Schema 强制输出、禁止 Markdown 包装 |
-| A3.3 | `mllm_verifier.py` | `MLLMVerifier` 类 | 加载 Qwen2.5-VL-7B，执行推理，返回严格符合 §6.2 Schema 的 JSON |
-| A3.4 | JSON 异常兜底 | 非标准 JSON 解析失败时的重试/降级逻辑 | 最多重试 2 次，失败后返回 `{"evidence_sufficient": false, ...}` |
-| A3.5 | `schema_validator.py` | 通用 JSON Schema 校验器 | 对 MLLM 输出做最终格式校验，确保字段完整 |
-| A3.6 | 单元测试（Mock MLLM） | 用模拟 JSON 响应覆盖三种 event_type 分支 | `pytest tests/test_mllm_verifier.py` 全绿 |
+| A3.1 | `frame_sampler.py` | 视频均匀帧采样器（16 帧） | ✅ |
+| A3.2 | `mllm_prompts.yaml` | System Prompt ×3（long_inactivity / social_interaction / repetitive_behavior），各含 Few-Shot | ✅ |
+| A3.3 | `mllm_verifier.py` | `MLLMVerifier` 类（Mock/Real 双模式） + `generate_mllm_triggers()` 事件扫描 | ✅ |
+| A3.4 | JSON 异常兜底 | 非标准 JSON 重试 ×2 → `_safe_default()` → `evidence_sufficient: false` | ✅ |
+| A3.5 | `schema_validator.py` | §6.1 + §6.2 JSON Schema 校验，自动修复缺失字段 | ✅ |
+| A3.6 | 单元测试 | 28 tests，覆盖 Prompt 模板 / Mock 推理 / 事件触发集成 / 异常处理 | ✅ |
 
-**工程化要求**：
-- Qwen2.5-VL 加载/推理**必须先获取 GPU 审批**，默认使用 Mock 模式跑测试
-- Prompt 必须采用封闭标签（`enum` 约束），禁止大模型自由发挥
-- 输出 JSON 必须通过 `json.loads()` 校验，且所有 `required` 字段齐全
+#### A3 实时事件驱动架构
+
+```
+每帧 → A2 检测器内部实时判定
+         │
+         ├─ 触发条件满足 → 检查冷却期
+         │                    │
+         │          冷却期内 ──┴── 冷却期外
+         │           │                  │
+         │    num_of_occurrences++   记录时间戳 trigger_ts
+         │    不调用 MLLM            截取 16 帧 → Qwen2.5-VL 推理
+         │                          标记冷却期开始
+         │
+         └─ 未触发 → 继续监控
+```
+
+#### 冷却期设计
+
+| event_type | 冷却期 | 冷却期内行为 |
+|:---|:---|:---|
+| `repetitive_behavior` | **60s** | 仅累加 `num_of_occurrences`，不调用 MLLM |
+| `social_interaction` | **120s** | 仅累加 `num_of_occurrences`，不调用 MLLM |
+| `long_inactivity` | **120s** | 仅累加 `num_of_occurrences`，不调用 MLLM |
+
+冷却期从每次 MLLM 调用完成时开始计时，期间 A2 若再次检测到同一 event_type，仅增加 `num_of_occurrences` 计数，不发起新的 MLLM 请求。冷却期结束后首帧再次触发时，启动新一轮 MLLM 复核。
+
+#### YOLO + Qwen 共驻显存
+
+- YOLOv8n-pose：~45 MB VRAM
+- Qwen2.5-VL-7B：~15.5 GB VRAM
+- 合计：~15.5 GB / 23.5 GB，完全可同时驻留
+- **不需要加载/卸载切换**，A2 触发后直接调 A3，零模型加载延迟
+
+#### GPU 验证结果
+
+| 视频 | 时长 | A3 事件 | 结果 |
+|:---|:---|:---|:---|
+| P14T14C06 | 9.6min | 1 (repetitive_behavior) | same_route, evidence_sufficient ✅ |
+| P10T07C04 | 19.5min | 2 (repetitive + social) | both evidence_sufficient ✅ |
+
+#### 已修复的 Bug
+
+| Bug | 根因 | 修复 |
+|:---|:---|:---|
+| `Qwen2VLForConditionalGeneration` 不可用 | transformers 5.x 中类名为 `Qwen2_5_VLForConditionalGeneration` | `mllm_verifier.py:44,183` 更新导入 |
+| `analytical_summary` 缺失 | video_tasks.md §6.2 定义但代码三处遗漏 | `schema_validator.py` + `mllm_prompts.yaml` + `mllm_verifier.py` 同步补全 |
+| social_interaction 输出 `event_type: "family_interaction"` | Prompt Task 子类型标签与 Output Format 固定值冲突，模型选了前者 | 三个 Prompt 统一加固：去掉 Task 中的子类型标签，Output Format 和字段说明中两次强调 event_type 固定值 |
+| `libgomp: Invalid value for environment variable OMP_NUM_THREADS` | AutoDL 设 `OMP_NUM_THREADS=0` | Pipeline 脚本顶部在 C 库导入前 `del os.environ["OMP_NUM_THREADS"]` |
+
+#### §6.2 Schema 新增字段
+
+用户已更新 `video_tasks.md`，新增两个 required 字段：
+
+```json
+"cooling_period": {
+  "type": "integer",
+  "enum": [60, 120],
+  "description": "冷却周期（秒）"
+},
+"num_of_occurrences": {
+  "type": "integer",
+  "minimum": 0,
+  "description": "事件在观察周期内的发生次数"
+}
+```
+
+- `cooling_period`：该事件类型的冷却期设置（60s or 120s）
+- `num_of_occurrences`：冷却期内 A2 检测到同类型异常的次数（含触发 MLLM 的那一次）
 
 ---
 
@@ -394,15 +462,18 @@ is_standing = NOT is_truly_sedentary
 |:---|:---|:---|
 | A1 全部 | 视频感知基座 + 特征提取 + 日级聚合 | 104 passed ✅ |
 | A2 全部 | 5 项专项行为检测器 + 总装 | 33 passed ✅ |
-| 管线集成 | A1+A2 GPU 全流程 + 并行批量 | ✅ |
-| GPU 验证 | 10 视频部分完成（P02, P03, P04, P06, P07, P10, P12, P14） | ✅ |
+| A3 Mock | Prompt 模板 + Verifier + Schema 校验 + 异常兜底 | 28 passed ✅ |
+| A3 GPU | Qwen2.5-VL-7B 实机验证（P14T14C06, P10T07C04 各两次） | ✅ |
+| 管线集成 | A1+A2+A3 全流程脚本 `run_a1_a3_pipeline.py` | ✅ |
+| 文档 | README.md v4.0 + plan.md + claude_operation_log.md | ✅ |
 
 ### 下一步
 
-1. **参数标定**：在 10 视频全量结果上标定最优阈值
-2. **A3 开发**：Qwen2.5-VL 事件复核引擎
-3. **A4 开发**：多模型一致性校验与拒判机制
+1. **A3 实时化改造**：实现冷却期机制、YOLO+Qwen 共驻显存、逐帧 A2 信号监听 → 实时触发 MLLM
+2. **同步 §6.2 Schema**：`cooling_period` / `num_of_occurrences` 字段落实到 `schema_validator.py` + `mllm_prompts.yaml` + `mllm_verifier.py`
+3. **批量 GPU 验证**：10 个视频全量跑 A1+A2+A3
+4. **A4 开发**：多模型一致性校验与拒判机制
 
 ---
 
-> 📋 计划版本: v3.0 | 更新日期: 2026-07-16 | 基于: `video_tasks.md`
+> 📋 计划版本: v4.0 | 更新日期: 2026-07-20 | 基于: `video_tasks.md` + `agent.md`
