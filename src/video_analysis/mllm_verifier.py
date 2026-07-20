@@ -354,6 +354,8 @@ class MLLMVerifier:
             "long_inactivity": [
                 json.dumps({
                     "event_type": "long_inactivity",
+                    "cooling_period": 120,
+                    "num_of_occurrences": 1,
                     "observable_evidence": "老人坐在沙发上，连续坐姿超过5分钟，无明显肢体运动，桌面有书本和茶杯",
                     "analytical_summary": "老人出现长时间坐姿但伴有阅读行为，疑似积极认知活动，需要关注日常精神状态变化",
                     "start_sec": 0, "end_sec": 20,
@@ -365,6 +367,8 @@ class MLLMVerifier:
                 }),
                 json.dumps({
                     "event_type": "long_inactivity",
+                    "cooling_period": 120,
+                    "num_of_occurrences": 1,
                     "observable_evidence": "老人坐在扶手椅上，头部低垂，眼睛闭合，周围无认知活动物品",
                     "analytical_summary": "老人出现长时间闭眼低垂姿势且无认知活动迹象，疑似消极呆坐/打盹行为，需要关注日常活动量是否下降",
                     "start_sec": 0, "end_sec": 20,
@@ -378,6 +382,8 @@ class MLLMVerifier:
             "social_interaction": [
                 json.dumps({
                     "event_type": "social_interaction",
+                    "cooling_period": 120,
+                    "num_of_occurrences": 1,
                     "observable_evidence": "两人面对面坐在餐桌两侧，正在交谈，老人表情放松，茶几上有茶杯",
                     "analytical_summary": "老人出现多人共处场景且互动氛围放松，疑似正常家庭互动，需要关注社交频率是否异常增加或减少",
                     "start_sec": 0, "end_sec": 15,
@@ -389,6 +395,8 @@ class MLLMVerifier:
                 }),
                 json.dumps({
                     "event_type": "social_interaction",
+                    "cooling_period": 120,
+                    "num_of_occurrences": 1,
                     "observable_evidence": "陌生人站在门口，手持文件夹向老人展示，老人站立姿态拘谨",
                     "analytical_summary": "老人出现在门口与手持文件者互动的拘谨场景，疑似陌生人推销/诈骗接触，需要关注财产安全风险",
                     "start_sec": 0, "end_sec": 15,
@@ -402,6 +410,8 @@ class MLLMVerifier:
             "repetitive_behavior": [
                 json.dumps({
                     "event_type": "repetitive_behavior",
+                    "cooling_period": 60,
+                    "num_of_occurrences": 1,
                     "observable_evidence": "老人在客厅与玄关之间来回走动5次，未接触任何物品，步伐缓慢",
                     "analytical_summary": "老人出现固定路线反复走动且未接触物品，疑似无目的徘徊行为，需要关注是否存在认知功能变化",
                     "start_sec": 0, "end_sec": 20,
@@ -413,6 +423,8 @@ class MLLMVerifier:
                 }),
                 json.dumps({
                     "event_type": "repetitive_behavior",
+                    "cooling_period": 60,
+                    "num_of_occurrences": 1,
                     "observable_evidence": "老人反复打开同一个抽屉4次，每次短暂查看后关上",
                     "analytical_summary": "老人出现对同一位置反复翻找行为，疑似强迫性检查/记忆减退表现，需要关注日常记忆功能变化",
                     "start_sec": 0, "end_sec": 20,
@@ -427,6 +439,8 @@ class MLLMVerifier:
 
         responses = mock_responses.get(event_type, [json.dumps({
             "event_type": event_type,
+            "cooling_period": 60,
+            "num_of_occurrences": 1,
             "observable_evidence": "No evidence available (mock)",
             "analytical_summary": "MLLM无法从当前画面中提取足够证据，无法做出有效判断",
             "start_sec": 0, "end_sec": 10,
@@ -446,6 +460,8 @@ class MLLMVerifier:
         """JSON 解析失败时的安全兜底。"""
         return {
             "event_type": event_type,
+            "cooling_period": 60 if event_type == "repetitive_behavior" else 120,
+            "num_of_occurrences": 1,
             "observable_evidence": "MLLM output could not be parsed",
             "analytical_summary": "MLLM输出解析失败，无法生成分析总结，建议人工复核",
             "start_sec": round(start_sec, 1),

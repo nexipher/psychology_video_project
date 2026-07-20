@@ -32,6 +32,8 @@ long_inactivity:
 
     {
       "event_type": "long_inactivity",
+      "cooling_period": 120,
+      "num_of_occurrences": 1,
       "observable_evidence": "只描述画面可见事实，如：连续坐姿、无明显肢体运动、桌面有书",
       "analytical_summary": "老人出现[现象]，疑似[结论]，需要关注",
       "start_sec": 0,
@@ -45,6 +47,8 @@ long_inactivity:
 
     ## 字段说明
     - event_type: **必须填 "long_inactivity"**，不能填其他值
+    - cooling_period: **必须填 120**（此场景冷却期为120秒）
+    - num_of_occurrences: **必须填 1**（系统将根据实际触发次数覆盖此值）
     - observable_evidence: 一句话描述你看到的画面证据
     - analytical_summary: 一句话分析总结，格式为"老人出现[现象]，疑似[结论]，需要关注"。禁止诊断性结论（如抑郁、焦虑症等），只客观描述行为
     - activity_state: 选 "active" / "sedentary" / "uncertain"
@@ -100,6 +104,8 @@ social_interaction:
 
     {
       "event_type": "social_interaction",
+      "cooling_period": 120,
+      "num_of_occurrences": 1,
       "observable_evidence": "只描述画面可见事实，如：两人面对面坐在餐桌两侧、正在交谈、桌上有文件。并在evidence中写明社交子类型（家人互动/陌生人接触/独自看电视等）",
       "analytical_summary": "老人出现[现象]，疑似[结论]，需要关注",
       "start_sec": 0,
@@ -113,6 +119,8 @@ social_interaction:
 
     ## 字段说明
     - event_type: **必须填 "social_interaction"**，不能填其他值（如 family_interaction、stranger_interaction 等）
+    - cooling_period: **必须填 120**（此场景冷却期为120秒）
+    - num_of_occurrences: **必须填 1**（系统将根据实际触发次数覆盖此值）
     - social_context: 选 "alone" / "co_present" / "interacting" / "uncertain"
     - observable_evidence: 描述人物关系、物品、氛围的证据，可在文中写明社交子类型（如"与家人正常交谈"或"疑似陌生人推销"）
     - analytical_summary: 一句话分析总结，格式为"老人出现[现象]，疑似[结论]，需要关注"。禁止诊断性结论
@@ -163,6 +171,8 @@ repetitive_behavior:
 
     {
       "event_type": "repetitive_behavior",
+      "cooling_period": 60,
+      "num_of_occurrences": 1,
       "observable_evidence": "只描述画面可见事实，如：老人在客厅与玄关之间来回走动5次，未接触任何物品",
       "analytical_summary": "老人出现[现象]，疑似[结论]，需要关注",
       "start_sec": 0,
@@ -176,6 +186,8 @@ repetitive_behavior:
 
     ## 字段说明
     - event_type: **必须填 "repetitive_behavior"**，不能填其他值（如 anxious_wandering、compulsive_searching 等）
+    - cooling_period: **必须填 60**（此场景冷却期为60秒）
+    - num_of_occurrences: **必须填 1**（系统将根据实际触发次数覆盖此值）
     - repetition_type: 选 "same_route" / "repeated_search" / "none" / "uncertain"
     - observable_evidence: 描述重复行为的具体表现
     - analytical_summary: 一句话分析总结，格式为"老人出现[现象]，疑似[结论]，需要关注"。禁止诊断性结论

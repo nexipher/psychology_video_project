@@ -73,6 +73,16 @@ QWEN_VL_EVENT_SCHEMA: Dict[str, Any] = {
             "type": "string",
             "enum": ["long_inactivity", "social_interaction", "repetitive_behavior"],
         },
+        "cooling_period": {
+            "type": "integer",
+            "enum": [60, 120],
+            "description": "冷却周期（秒）",
+        },
+        "num_of_occurrences": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "事件在观察周期内的发生次数",
+        },
         "observable_evidence": {
             "type": "string",
             "description": "只描述画面可见事实",
@@ -106,6 +116,8 @@ QWEN_VL_EVENT_SCHEMA: Dict[str, Any] = {
     },
     "required": [
         "event_type",
+        "cooling_period",
+        "num_of_occurrences",
         "observable_evidence",
         "start_sec",
         "end_sec",

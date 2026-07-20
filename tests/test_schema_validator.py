@@ -72,6 +72,8 @@ class TestMLLMOutputValidation:
     def test_valid_mllm_output(self):
         data = {
             "event_type": "long_inactivity",
+            "cooling_period": 120,
+            "num_of_occurrences": 1,
             "observable_evidence": "连续坐姿，无明显肢体运动",
             "start_sec": 10.0,
             "end_sec": 25.0,
@@ -87,6 +89,8 @@ class TestMLLMOutputValidation:
     def test_invalid_event_type(self):
         data = {
             "event_type": "unknown_event",
+            "cooling_period": 60,
+            "num_of_occurrences": 1,
             "observable_evidence": "test",
             "start_sec": 0,
             "end_sec": 10,
@@ -107,8 +111,11 @@ class TestMLLMOutputValidation:
     def test_all_enum_values(self):
         """所有合法枚举值应通过校验。"""
         for event_type in ("long_inactivity", "social_interaction", "repetitive_behavior"):
+            cp = 60 if event_type == "repetitive_behavior" else 120
             data = {
                 "event_type": event_type,
+                "cooling_period": cp,
+                "num_of_occurrences": 1,
                 "observable_evidence": "test",
                 "start_sec": 0, "end_sec": 10,
                 "activity_state": "active",
@@ -128,6 +135,8 @@ class TestSafeParseJSON:
         import json
         raw = json.dumps({
             "event_type": "long_inactivity",
+            "cooling_period": 120,
+            "num_of_occurrences": 1,
             "observable_evidence": "test",
             "start_sec": 0, "end_sec": 10,
             "activity_state": "sedentary",
@@ -144,6 +153,8 @@ class TestSafeParseJSON:
         raw = """```json
 {
     "event_type": "long_inactivity",
+    "cooling_period": 120,
+    "num_of_occurrences": 1,
     "observable_evidence": "test",
     "start_sec": 0,
     "end_sec": 10,
