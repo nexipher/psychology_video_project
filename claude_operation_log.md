@@ -556,4 +556,25 @@
 * **置信度或遗留待办（TODO）**：
   - Step 4: 创建流式管线脚本，串联 A1+YOLO+A2+Dispatcher+A3+Qwen
   - 当前 _pause_all_detectors() 为空实现（检测器内部状态自然衰减），后续可在检测器层面实现显式 pause/reset
+
+---
+
+### [2026-07-20] - [Plan §11.6] Step 4：流式管线脚本 run_streaming_pipeline.py
+
+* **当前操作动作**：创建 YOLO+Qwen 共驻流式管线，A2 实时触发 A3
+* **对应计划锚点**：实现 plan.md §11.6 YOLO+Qwen 共驻 + §11.7 同步推理 + §11.8 流式输出
+* **核心变更说明**：
+  1. **`run_streaming_pipeline.py`** — 与 batch 模式的关键区别：
+     - 启动时同时加载 YOLO（~45MB）和 Qwen（~15.5GB），共驻显存
+     - `behavior.set_trigger_callback(dispatcher.on_trigger)` 注册 A2→A3 回调
+     - 逐帧 A2 检测器触发后**实时**进入 `dispatcher.on_trigger()` → 冷却期判断 → MLLM
+     - 输出含 `pipeline_mode: "streaming"`，文件名加 `_streaming_` 后缀
+     - 每 500 帧打印冷却期状态 + MLLM 调用次数
+  2. **与 batch 脚本共存**：两个 pipeline 各自独立，不互相影响
+* **涉及/修改的文件清单**：
+  - `scripts/run_streaming_pipeline.py` (Created)
+* **执行结果与验证状态**：导入通过；63/63 A2+A3 tests 通过
+* **置信度或遗留待办（TODO）**：
+  - Step 5: GPU 单视频验证（P14T14C06 流式跑通）
+  - Step 6: 10 视频全量 GPU 跑批
 ---
