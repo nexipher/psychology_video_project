@@ -1,0 +1,113 @@
+{
+  "user_id": "P04T15C07",
+  "date": "2026-07-21",
+  "pipeline_mode": "streaming",
+  "daily_metrics": {
+    "active_minutes": 3.21,
+    "sedentary_ratio": 0.0,
+    "room_transition_count": 138,
+    "night_activity_count": 10,
+    "social_interaction_minutes": 0.07,
+    "repetitive_path_count": 0,
+    "movement_speed": 0.1169,
+    "coverage_minutes": 3.21,
+    "feature_confidence": 0.3771
+  },
+  "a2_special_behavior": {
+    "daily_repetitive_path_count": 0,
+    "daily_hotspot_action_count": 3,
+    "daily_prolonged_inactive_count": 0,
+    "max_inactive_stretch_sec": 63.079999999999984,
+    "daily_avg_social_intensity": 0.3982,
+    "circadian": {
+      "date": "2026-07-21",
+      "wake_time": 8.0,
+      "sleep_time": 23.0,
+      "nap_duration_minutes": 0.0,
+      "baseline_wake_mean": 8.0,
+      "baseline_sleep_mean": 23.0,
+      "wake_offset_hours": 0.0,
+      "sleep_offset_hours": 0.0,
+      "is_circadian_disturbed": false,
+      "baseline_days_count": 0,
+      "confidence_score": 0.4,
+      "time_window": [
+        0.0,
+        24.0
+      ],
+      "valid_duration": 0.0
+    }
+  },
+  "a3_mllm_verification": [
+    {
+      "event_type": "repetitive_behavior",
+      "cooling_period": 60,
+      "num_of_occurrences": 1,
+      "observable_evidence": "老人在厨房来回走动3次，未接触任何物品",
+      "analytical_summary": "老人出现焦虑徘徊，疑似焦虑状态，需要关注",
+      "start_sec": 0.0,
+      "end_sec": 15.2,
+      "activity_state": "active",
+      "social_context": "alone",
+      "repetition_type": "same_route",
+      "quality_flags": [],
+      "evidence_sufficient": true
+    },
+    {
+      "event_type": "repetitive_behavior",
+      "cooling_period": 60,
+      "num_of_occurrences": 2,
+      "observable_evidence": "老人在厨房内来回走动2次，未接触任何物品",
+      "analytical_summary": "老人出现焦虑徘徊，疑似焦虑状态，需要关注",
+      "start_sec": 279.6,
+      "end_sec": 299.6,
+      "activity_state": "active",
+      "social_context": "alone",
+      "repetition_type": "same_route",
+      "quality_flags": [],
+      "evidence_sufficient": true
+    },
+    {
+      "event_type": "social_interaction",
+      "cooling_period": 120,
+      "num_of_occurrences": 1,
+      "observable_evidence": "老人独自在厨房操作，没有与他人互动。",
+      "analytical_summary": "老人独自在厨房操作，没有与他人互动。",
+      "start_sec": 310.2,
+      "end_sec": 325.2,
+      "activity_state": "sedentary",
+      "social_context": "alone",
+      "repetition_type": "none",
+      "quality_flags": [],
+      "evidence_sufficient": true
+    },
+    {
+      "event_type": "repetitive_behavior",
+      "cooling_period": 60,
+      "num_of_occurrences": 2,
+      "observable_evidence": "老人在厨房内来回走动3次，未接触任何物品",
+      "analytical_summary": "老人出现焦虑徘徊，疑似焦虑状态，需要关注",
+      "start_sec": 399.6,
+      "end_sec": 419.6,
+      "activity_state": "active",
+      "social_context": "alone",
+      "repetition_type": "same_route",
+      "quality_flags": [],
+      "evidence_sufficient": true
+    },
+    {
+      "event_type": "repetitive_behavior",
+      "cooling_period": 60,
+      "num_of_occurrences": 2,
+      "observable_evidence": "老人坐在餐桌旁，左手拿起一个杯子，右手拿起另一个杯子，然后放下，重复了两次",
+      "analytical_summary": "老人出现重复拿起并放下杯子的行为，疑似焦虑徘徊，需要关注",
+      "start_sec": 519.6,
+      "end_sec": 539.6,
+      "activity_state": "active",
+      "social_context": "alone",
+      "repetition_type": "repeated_search",
+      "quality_flags": [],
+      "evidence_sufficient": true
+    }
+  ]
+}
