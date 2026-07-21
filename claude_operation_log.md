@@ -577,4 +577,30 @@
 * **置信度或遗留待办（TODO）**：
   - Step 5: GPU 单视频验证（P14T14C06 流式跑通）
   - Step 6: 10 视频全量 GPU 跑批
+
+---
+
+### [2026-07-21] - [Plan §11 验证] Step 5：GPU 流式管线单视频验证 + 修复 long_inactivity 误触发
+
+* **当前操作动作**：GPU 开启，P14T14C06 流式管线跑通，修复 ProlongedInactivityDetector 误触发 Bug
+* **对应计划锚点**：验证 plan.md §11.6-§11.8 流式管线完整功能
+* **核心变更说明**：
+  1. **流式管线验证**（P14T14C06, 9.6min）：
+     - YOLO+Qwen 共驻 15.5GB 正常 ✅
+     - 冷却期生效：long_inactivity 全程 idle，repetitive/social 交替触发 ✅
+     - 9 次 MLLM 调用，start_sec/end_sec 为实际视频时间戳 ✅
+     - fps 从初始 30 逐步提升至 60（Qwen 推理冷却期减少阻塞） ✅
+  2. **Bug 修复**：`long_inactivity` 误触发（第一次跑：54 触发/14 MLLM 调用）
+     - **根因**：`ProlongedInactivityDetector._emit_inactive_event()` 在每次静止→活动切换时都返回 dict，不论时长
+     - **修复**：`SpecialBehaviorDetector.update()` 中只在实际 `warning_triggered`(≥1h) 或 `prolonged_triggered`(≥2h) 时才 `_fire_trigger("prolonged_inactivity")`
+     - P14T14C06（9.6min）不会触发久坐检测中的 MLLM，修复后 long_inactivity 全程 idle
+  3. **显示 Bug 修复**：`total_triggers/total_mllm_calls` 在 `flush()` 前保存（flush 清空内部状态）
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/special_behavior.py` (Modified — inactivity trigger guard)
+  - `scripts/run_streaming_pipeline.py` (Modified — flush-safe stats)
+* **执行结果与验证状态**：51/51 A2+A3 tests 通过；流式管线端到端跑通
+* **置信度或遗留待办（TODO）**：
+  - social_interaction 在单人视频仍触发 5 次（YOLO 假阳性多人检测 + social_intensity=0.300 刚好在阈值）
+  - 9 次 MLLM 调用 × ~10s = ~90s MLLM 开销，占总处理时间 237s 的 38%
+  - Step 6: 10 视频全量 GPU 跑批
 ---

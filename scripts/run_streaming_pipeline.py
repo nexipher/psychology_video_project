@@ -287,7 +287,9 @@ def main():
     behavior.flush(ts)
     a2_summary = behavior.get_daily_summary(datetime.now().strftime("%Y-%m-%d"))
 
-    # A3 收集所有 MLLM 结果
+    # A3 收集统计（在 flush 前保存，flush 会清空内部状态）
+    total_triggers = dispatcher.total_triggers
+    total_mllm_calls = dispatcher.total_mllm_calls
     mllm_results = dispatcher.flush()
 
     # 卸载模型
@@ -298,7 +300,7 @@ def main():
     print(f"\n{'='*60}")
     print(f"处理完成: {total_frames} 帧, {t_total:.1f}s, {total_frames/t_total:.1f} fps")
     print(f"窗口输出: {window_outputs}")
-    print(f"A3 触发总数: {dispatcher.total_triggers} | MLLM 实际调用: {dispatcher.total_mllm_calls}")
+    print(f"A3 触发总数: {total_triggers} | MLLM 实际调用: {total_mllm_calls}")
 
     # ═══════════════════════════════════════
     # 日级聚合 (A1)
@@ -359,7 +361,7 @@ def main():
           f"社交={a2_summary.get('daily_avg_social_intensity', 0):.3f}")
 
     print(f"\nA3 MLLM 复核: {len(mllm_results)} 个事件 "
-          f"(触发{dispatcher.total_triggers}次, 实际调用{dispatcher.total_mllm_calls}次)")
+          f"(触发{total_triggers}次, 实际调用{total_mllm_calls}次)")
     for r in mllm_results:
         status = "✅" if r.get("evidence_sufficient") else "⚠️"
         print(f"  {status} [{r.get('event_type')}] "

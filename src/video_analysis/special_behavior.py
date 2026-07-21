@@ -976,6 +976,7 @@ class SpecialBehaviorDetector:
                 self._fire_trigger("repeated_action", timestamp)
 
         # 3. 久坐/静止 → long_inactivity
+        # 只在真正触发 warning(≥1h) 或 prolonged(≥2h) 时通知 A3
         if self._inactivity is not None:
             kp_for_inactivity = None
             if keypoints is not None and N > 0:
@@ -983,7 +984,8 @@ class SpecialBehaviorDetector:
             r = self._inactivity.update(is_sedentary, timestamp, kp_for_inactivity)
             if r:
                 outputs["prolonged_inactivity"] = r
-                self._fire_trigger("prolonged_inactivity", timestamp)
+                if r.get("warning_triggered") or r.get("prolonged_triggered"):
+                    self._fire_trigger("prolonged_inactivity", timestamp)
 
         # 4. 昼夜节律 — 每小时聚合一次（不参与实时触发）
         if self._circadian is not None:
