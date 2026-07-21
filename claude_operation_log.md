@@ -603,4 +603,29 @@
   - social_interaction 在单人视频仍触发 5 次（YOLO 假阳性多人检测 + social_intensity=0.300 刚好在阈值）
   - 9 次 MLLM 调用 × ~10s = ~90s MLLM 开销，占总处理时间 237s 的 38%
   - Step 6: 10 视频全量 GPU 跑批
+
 ---
+
+### [2026-07-21] - [Plan §11 验证] Step 6：10 视频全量 GPU 流式跑批
+
+* **当前操作动作**：`run_streaming_batch.py` 批量跑通 10 个视频，总耗时 3864s (~1h 4min)
+* **对应计划锚点**：验证 plan.md Step 6 全量跑批
+* **核心变更说明**：
+  1. **批处理脚本**（`run_streaming_batch.py`）：
+     - Qwen 加载一次共驻显存（15.4GB），每个视频独立加载/卸载 YOLO
+     - 每个视频独立创建 A2 + A3EventDispatcher（避免状态污染）
+     - 输出：每个视频独立 JSON + batch 汇总 JSON
+  2. **10 视频结果汇总**：
+     - 总计 131 触发 → 119 MLLM 调用（冷却期过滤 9%）
+     - long_inactivity 全视频 0 次触发（修复生效）
+     - P03T12C01 最长：50,541 帧 / 745s / 23 次 MLLM
+     - P04T15C07 最短：14,904 帧 / 191s / 5 次 MLLM
+  3. **新发现**：MLLM 输出非标准 `repetition_type`（same_position, purposeful_repetition, anxious_wandering, head_rotation），均为 Prompt 任务子类型标签，Schema 校验降级捕获
+* **涉及/修改的文件清单**：
+  - `scripts/run_streaming_batch.py` (Created)
+* **执行结果与验证状态**：10/10 跑通，输出到 `results/A1A3/`
+* **置信度或遗留待办（TODO）**：
+  - 加固 `repetition_type` Prompt 枚举约束
+  - P04T15C07 / P14T14C06 的 sedentary_ratio=0.00 需排查
+---
+
