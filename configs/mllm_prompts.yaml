@@ -152,22 +152,21 @@ repetitive_behavior:
     你只能基于画面中可见的客观事实进行描述和判断。
 
     ## 任务
-    画面中老人表现出重复性行为模式。请判断属于以下哪种类型：
-    - "purposeful_repetition": 有目的的重复行为（如收拾东西来回走动、锻炼身体来回踱步、整理房间反复进出）
-    - "anxious_wandering": 无目的焦虑徘徊（在固定区域来回走动但没有明确目的、表现出不安或困惑的状态）
-    - "compulsive_searching": 焦虑地反复查看/翻找（反复打开同一抽屉/柜子、翻找同一堆物品、检查同一位置多次）
-    - "none": 画面中没有观察到明显的重复性行为
-    - "uncertain": 画面信息不足
+    画面中老人表现出重复性行为模式。请判断属于哪种**路线/物品模式**：
+    - 路线重复：老人在固定路线上来回走动（如客厅↔玄关、走廊↔卧室）
+    - 物品重复：老人反复接触同一物品或位置（如翻抽屉、检查门锁）
+    - 无重复：画面中未观察到明显的重复性行为
+    - 不确定：信息不足
 
     ## 判断依据
-    - 观察老人手臂动作和目光方向，判断是否有明确的操作对象
-    - 如果有明确物品（如衣服、餐具、书籍）且动作有规律，倾向于 "purposeful_repetition"
-    - 如果来回走动但没有接触任何物品，步伐犹豫，面部表情不安，倾向于 "anxious_wandering"
-    - 如果反复打开同一柜门/抽屉，或在同一堆物品中反复翻找，倾向于 "compulsive_searching"
+    - 观察移动轨迹是固定路线重复还是同一位置进出
+    - 如果有明确物品操作（衣服、餐具、书籍等），倾向于物品重复
+    - 如果没有接触任何物品，只是来回走动，倾向于路线重复
+    - 分析结论（有目的/焦虑/强迫）请写入 analytical_summary，不要在 repetition_type 中使用
 
     ## 输出格式
     严格返回以下 JSON，不要输出其他内容，不要用 markdown 包装：
-    **注意：event_type 必须固定填写 "repetitive_behavior"，不能填其他值。**
+    **注意：repetition_type 只能填 "same_route" | "repeated_search" | "none" | "uncertain"，禁止填其他值。**
 
     {
       "event_type": "repetitive_behavior",
@@ -185,12 +184,12 @@ repetitive_behavior:
     }
 
     ## 字段说明
-    - event_type: **必须填 "repetitive_behavior"**，不能填其他值（如 anxious_wandering、compulsive_searching 等）
-    - cooling_period: **必须填 60**（此场景冷却期为60秒）
-    - num_of_occurrences: **必须填 1**（系统将根据实际触发次数覆盖此值）
-    - repetition_type: 选 "same_route" / "repeated_search" / "none" / "uncertain"
-    - observable_evidence: 描述重复行为的具体表现
-    - analytical_summary: 一句话分析总结，格式为"老人出现[现象]，疑似[结论]，需要关注"。禁止诊断性结论
+    - event_type: **必须填 "repetitive_behavior"**
+    - cooling_period: **必须填 60**
+    - num_of_occurrences: **必须填 1**
+    - repetition_type: **必须填 "same_route" | "repeated_search" | "none" | "uncertain" 之一**，禁止填 purposeful_repetition / anxious_wandering / compulsive_searching / same_position 等
+    - observable_evidence: 描述重复行为的具体表现（路线重复还是物品重复）
+    - analytical_summary: 分析总结（有目的收拾/焦虑徘徊/强迫翻找等判断写在这里）
 
   few_shot:
     - frames: "trimmed/rgb/anxious_pace/*.mp4"

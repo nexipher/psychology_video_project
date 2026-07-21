@@ -625,7 +625,29 @@
   - `scripts/run_streaming_batch.py` (Created)
 * **执行结果与验证状态**：10/10 跑通，输出到 `results/A1A3/`
 * **置信度或遗留待办（TODO）**：
-  - 加固 `repetition_type` Prompt 枚举约束
+  - 加固 `repetition_type` Prompt 枚举约束（同 social_interaction 修复模式）
   - P04T15C07 / P14T14C06 的 sedentary_ratio=0.00 需排查
+
+---
+
+### [2026-07-21] - 修复：repetition_type 枚举约束加固
+
+* **当前操作动作**：修复 Qwen2.5-VL 输出非标准 repetition_type 导致 Schema 校验失败
+* **核心变更说明**：
+  1. **Bug 复现**（10 视频全量跑批）：
+     - MLLM 输出非标准 `repetition_type`：`same_position`、`purposeful_repetition`、`anxious_wandering`、`head_rotation`
+     - 均为 Prompt Task 部分的子类型标签，与之前 `family_interaction` 同根原因
+     - Schema 校验拒绝 → 降级为 safe_default（evidence_sufficient: false）
+  2. **修复**（`mllm_prompts.yaml` repetitive_behavior）：
+     - Task 部分去掉子类型标签（purposeful_repetition, anxious_wandering, compulsive_searching）
+     - 改为自然语言描述：路线重复 vs 物品重复
+     - Output Format 加粗警告：repetition_type 只能填 4 个枚举值
+     - 字段说明中显式列出禁止值清单
+     - 分析结论（有目的/焦虑/强迫）移到 analytical_summary
+* **涉及/修改的文件清单**：
+  - `configs/mllm_prompts.yaml` (Modified — repetitive_behavior prompt)
+* **执行结果与验证状态**：28/28 MLLM tests 通过
+* **置信度或遗留待办（TODO）**：
+  - 修复效果需 GPU 重新验证（单视频即可）
 ---
 
