@@ -112,6 +112,18 @@ ightarrow$ 触发中高风险预警）。
 }
 ```
 
+| 字段 | 类型 | 中文含义 | 计算方式 |
+|:---|:---|:---|:---|
+| `active_minutes` | float | 活跃分钟数 | 帧级 `person_count>0 AND NOT is_sedentary` 累计分钟数 |
+| `sedentary_ratio` | float | 静止/久坐比例 | 30s 内 >60% 帧质心位移 <5px（基于 v3 静止比例法） |
+| `room_transition_count` | int | 房间切换次数 | 髋部质心跨越 200px 网格边界的累计次数 |
+| `night_activity_count` | int | 夜间活动次数 | 虚拟时钟落在 22:00-06:00 期间的活跃事件计数 |
+| `social_interaction_minutes` | float | 多人共现分钟数 | YOLO 检测到 ≥2 人的累计分钟数（含假阳性过滤） |
+| `repetitive_path_count` | int | 重复路径次数 | 由 A2 `daily_repetitive_path_count` 回填 |
+| `movement_speed` | float | 平均运动速度 | 髋部质心帧间位移均值（相对像素值/秒） |
+| `coverage_minutes` | float | 有效监测分钟数 | 至少检测到 1 人的时间长度 |
+| `feature_confidence` | float | A1 特征置信度 | 综合检测稳定性、遮挡率、多人假阳性比例 (0-1) |
+
 ### 4.1.1 A2 专项行为检测扩展字段（`a2_special_behavior`）
 
 以下字段由 `SpecialBehaviorDetector`（A2 模块）产出，作为 `daily_metrics` 的补充，附加在输出 JSON 的 `a2_special_behavior` 键下：
@@ -220,6 +232,21 @@ ightarrow$ 触发中高风险预警）。
   ]
 }
 ```
+
+| 字段 | 类型 | 中文含义 | 枚举值 / 约束 |
+|:---|:---|:---|:---|
+| `event_type` | string | 事件类型 | `long_inactivity` / `social_interaction` / `repetitive_behavior` |
+| `cooling_period` | int | 冷却周期（秒） | 60 (repetitive) / 120 (social, inactivity) |
+| `num_of_occurrences` | int | 冷却期内同类异常发生次数 | ≥0，由 A3EventDispatcher 填入，覆盖 MLLM 返回值 |
+| `observable_evidence` | string | 画面可见事实描述 | 只描述可见内容，如"连续坐姿、桌面有书"，不推断 |
+| `analytical_summary` | string | 一句话分析总结 | 格式："老人出现[现象]，疑似[结论]，需要关注"，禁止医学诊断 |
+| `start_sec` | number | 事件窗口起始秒数 | 视频内实际时间戳（00:00:00 起始） |
+| `end_sec` | number | 事件窗口结束秒数 | 视频内实际时间戳，通常 = start_sec + 10~20s |
+| `activity_state` | string | 人物活动状态 | `active` (活动) / `sedentary` (静止) / `uncertain` (不确定) |
+| `social_context` | string | 社交场景上下文 | `alone` (独处) / `co_present` (共处无互动) / `interacting` (互动中) / `uncertain` |
+| `repetition_type` | string | 重复行为类型 | `same_route` (固定路线重复) / `repeated_search` (反复翻找同一位置) / `none` / `uncertain` |
+| `quality_flags` | array | 画面质量标记 | `occlusion` (遮挡) / `low_light` (光线不足) / `off_camera` (不在画面内) |
+| `evidence_sufficient` | bool | 证据是否充分 | `false` 时不触发强等级报警，走 A4 拒判流程 |
 
 ---
 
