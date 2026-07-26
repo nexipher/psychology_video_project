@@ -84,19 +84,10 @@ class CrossValidator:
             )
 
             validated.append({
-                "event_type": event_type,
-                "trigger_ts": a3.get("start_sec"),
                 "verdict": verdict,                     # confirmed | conflict | uncertain
                 "confidence": round(confidence, 2),     # 0-1
-                "a2_signal": a2_signal or {},
-                "a3_evidence": {
-                    "observable_evidence": a3.get("observable_evidence", ""),
-                    "analytical_summary": a3.get("analytical_summary", ""),
-                    "activity_state": a3.get("activity_state"),
-                    "social_context": a3.get("social_context"),
-                    "repetition_type": a3.get("repetition_type"),
-                },
-                "detail": detail,
+                "detail": detail,                       # 中文解释
+                "a2_signal": a2_signal or {},           # A2 触发源信息（A3 中不包含）
                 "recommend_alert": verdict == "confirmed" and evidence_sufficient,
                 "alert_level": self._alert_level(verdict, evidence_sufficient),
             })

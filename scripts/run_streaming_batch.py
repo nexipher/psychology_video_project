@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A1+A2+A3 流式批量跑批 — 所有视频逐一跑流式管线，输出到 results/A1A3/。"""
+"""A1+A2+A3 流式批量跑批 — 所有视频逐一跑流式管线，输出到 results/A1A4/。"""
 
 from __future__ import annotations
 
@@ -293,7 +293,7 @@ def main():
         "videos": summary,
     }
 
-    results_dir = Path(__file__).resolve().parent.parent / "results" / "A1A3"
+    results_dir = Path(__file__).resolve().parent.parent / "results" / "A1A4"
     results_dir.mkdir(parents=True, exist_ok=True)
     batch_path = results_dir / f"batch_streaming_{timestamp}.json"
     with open(batch_path, "w", encoding="utf-8") as f:

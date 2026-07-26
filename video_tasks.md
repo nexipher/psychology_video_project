@@ -250,6 +250,60 @@ ightarrow$ 触发中高风险预警）。
 
 ---
 
+### 4.3 A4 交叉校验输出接口（嵌入 A3 每条结果中）
+
+A4 `CrossValidator` 的校验结果作为 `a4_validation` 字段嵌入对应 A3 结果的每条记录中，顶层另附 `final_verdict` 整体评估。
+
+```json
+{
+  "a3_mllm_verification": [
+    {
+      "event_type": "repetitive_behavior",
+      "observable_evidence": "...",
+      "...": "...（A3 原有字段完整保留）",
+      "a4_validation": {
+        "verdict": "confirmed",
+        "confidence": 0.9,
+        "detail": "CV+MLLM 一致：repetition_type=same_route，证据: ...",
+        "a2_signal": {
+          "a2_source": "repetitive_path",
+          "event_type": "repetitive_behavior",
+          "trigger_ts": 120.0
+        },
+        "recommend_alert": true,
+        "alert_level": "medium"
+      }
+    }
+  ],
+  "final_verdict": {
+    "overall_status": "alert",
+    "total_events": 15,
+    "confirmed": 11,
+    "conflict": 4,
+    "uncertain": 0,
+    "recommendation": "11/15 事件经 MLLM 确认属实，建议关注"
+  }
+}
+```
+
+| 字段 | 类型 | 中文含义 | 枚举值 / 约束 |
+|:---|:---|:---|:---|
+| `a4_validation.verdict` | string | A4 交叉校验裁决 | `confirmed` (CV+MLLM一致) / `conflict` (冲突) / `uncertain` (不确定) |
+| `a4_validation.confidence` | float | A4 综合置信度 | 0.20-0.95，confirmed 起步 0.7+0.2，conflict 起步 0.3 |
+| `a4_validation.detail` | string | 中文判定解释 | 说明一致/冲突原因，social+alone 标注"CV 假阳性" |
+| `a4_validation.a2_signal` | object | A2 触发源信号 | 包含 a2_source（检测器名）、event_type、trigger_ts |
+| `a4_validation.recommend_alert` | bool | 是否建议报警 | 仅 confirmed + evidence_sufficient 时为 true |
+| `a4_validation.alert_level` | string/null | 报警等级 | `medium` (confirmed) / `low` (conflict) / `null` (uncertain) |
+| `final_verdict.overall_status` | string | 整体状态 | `alert` / `caution` / `normal` / `uncertain` |
+| `final_verdict.confirmed` | int | 确认事件数 | CV+MLLM 一致的事件数量 |
+| `final_verdict.conflict` | int | 冲突事件数 | CV 检测到但 MLLM 不确认的事件数量 |
+| `final_verdict.uncertain` | int | 不确定事件数 | 画面证据不足的事件数量 |
+| `final_verdict.recommendation` | string | 整体建议 | 中文评估文本 |
+
+> **注意**：`a4_validation` 不含 A3 已有字段（event_type、observable_evidence、start_sec 等），只保留 A4 独有的校验结果，避免数据冗余。
+
+---
+
 ## 五、 阶段性交付物与开发排期建议
 
 同学A在调用 Claude Code 进行迭代开发时，建议遵循以下一周开发排期：

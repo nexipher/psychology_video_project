@@ -350,7 +350,7 @@ def main():
         "final_verdict": a4_summary,
     }
 
-    results_dir = Path(__file__).resolve().parent.parent / "results" / "A1A3"
+    results_dir = Path(__file__).resolve().parent.parent / "results" / "A1A4"
     results_dir.mkdir(parents=True, exist_ok=True)
     output_path = results_dir / f"{video_name}_streaming_{timestamp}.json"
     with open(output_path, "w", encoding="utf-8") as f:
