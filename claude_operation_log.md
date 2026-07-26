@@ -648,6 +648,33 @@
   - `configs/mllm_prompts.yaml` (Modified — repetitive_behavior prompt)
 * **执行结果与验证状态**：28/28 MLLM tests 通过
 * **置信度或遗留待办（TODO）**：
-  - 修复效果需 GPU 重新验证（单视频即可）
+  - 修复效果需 GPU 重新验证（单视频即可）→ 已验证：P14T14C06 0 次 enum 违规 ✅
+
+---
+
+### [2026-07-21] - [Plan A4.1] A4 Step 1：CrossValidator 双重一致性校验
+
+* **当前操作动作**：创建 CrossValidator 类 + 17 个单元测试
+* **对应计划锚点**：实现 plan.md A4.1 CrossValidator 设计 + A4.2 拒判机制
+* **核心变更说明**：
+  1. **`cross_validator.py`** — `CrossValidator` 类（纯 CPU，无状态）：
+     - 三个 event_type 各自定义 `_VALIDATION_KEY`（A3 关键判定字段）
+     - `_CONSISTENT_VALUES` / `_CONFLICT_VALUES` 定义确认和冲突的字段值集合
+     - 判定优先级：evidence_sufficient=false → quality_flags 非空 → key=uncertain → 一致性判定
+     - 置信度公式：base(0.7/0.3) + confirmed(+0.2) / conflict(-0.3)，范围 [0.2, 0.95]
+     - `validate()` 输出：verdict + confidence + alert_level + detail
+     - `summarize()` 整体评估：alert / caution / normal / uncertain
+     - social_interaction + alone 特殊标注「CV 假阳性」
+  2. **`test_cross_validator.py`** — 17 个测试：
+     - confirmed(3) / conflict(3) / uncertain(3) 分支覆盖
+     - 置信度范围、多事件独立判定
+     - 汇总评估（空、全确认、全冲突、混杂）
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/cross_validator.py` (Created)
+  - `tests/test_cross_validator.py` (Created)
+* **执行结果与验证状态**：17/17 tests passed (0.59s)
+* **置信度或遗留待办（TODO）**：
+  - Step 2: A2 暴露事件历史（`get_event_history()`），将 A2 触发上下文传入 `validate()`
+  - Step 3: 集成到流式管线，10 视频全量重跑对比
 ---
 
