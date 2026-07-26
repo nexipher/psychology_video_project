@@ -45,6 +45,7 @@ from src.video_analysis.aggregator import DailyAggregator
 from src.video_analysis.special_behavior import SpecialBehaviorDetector
 from src.video_analysis.mllm_verifier import MLLMVerifier
 from src.video_analysis.event_dispatcher import A3EventDispatcher
+from src.video_analysis.cross_validator import CrossValidator
 from src.utils.schema_validator import get_validator
 
 
@@ -292,6 +293,14 @@ def main():
     total_mllm_calls = dispatcher.total_mllm_calls
     mllm_results = dispatcher.flush()
 
+    # ═══════════════════════════════════════
+    # A4 交叉校验
+    # ═══════════════════════════════════════
+    trigger_history = behavior.get_trigger_history()
+    a4_validator = CrossValidator()
+    a4_validated = a4_validator.validate(mllm_results, trigger_history)
+    a4_summary = a4_validator.summarize(a4_validated)
+
     # 卸载模型
     estimator.unload_model()
     verifier.unload_model()
@@ -334,6 +343,8 @@ def main():
         "daily_metrics": daily.get("daily_metrics", {}),
         "a2_special_behavior": daily.get("a2_special_behavior", {}),
         "a3_mllm_verification": mllm_results,
+        "a4_cross_validation": a4_validated,
+        "final_verdict": a4_summary,
     }
 
     results_dir = Path(__file__).resolve().parent.parent / "results" / "A1A3"
@@ -369,6 +380,14 @@ def main():
               f"occurrences={r.get('num_of_occurrences', '?')} | "
               f"{r.get('activity_state', '?')} | "
               f"{r.get('repetition_type', r.get('social_context', '?'))}")
+
+    print(f"\nA4 交叉校验:")
+    for v in a4_validated:
+        verdict_icon = {"confirmed": "✅", "conflict": "⚠️", "uncertain": "❓"}.get(v["verdict"], "?")
+        print(f"  {verdict_icon} [{v['event_type']}] {v['verdict']} "
+              f"(confidence={v['confidence']:.2f}) | {v['detail'][:80]}")
+    print(f"  汇总: {a4_summary['overall_status']} | "
+          f"确认{a4_summary['confirmed']}/冲突{a4_summary['conflict']}/不确定{a4_summary['uncertain']}")
 
 
 if __name__ == "__main__":

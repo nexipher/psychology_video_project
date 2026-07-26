@@ -693,5 +693,29 @@
 * **执行结果与验证状态**：50/50 A2+A4 tests 通过
 * **置信度或遗留待办（TODO）**：
   - Step 3: 集成到流式管线，调用 `validator.validate(behavior.get_trigger_history(), a3_results)`
+
+---
+
+### [2026-07-21] - [Plan A4.3] A4 Step 3：CrossValidator 集成到流式管线
+
+* **当前操作动作**：将 CrossValidator 接入 run_streaming_pipeline.py 和 run_streaming_batch.py
+* **对应计划锚点**：plan.md A4.3 — 管线末尾加 A4 校验环节
+* **核心变更说明**：
+  1. `run_streaming_pipeline.py`：
+     - A3 结果收集后调用 `CrossValidator.validate(mllm_results, trigger_history)`
+     - `summarize()` 输出整体评估
+     - 输出 JSON 新增 `a4_cross_validation` + `final_verdict` 字段
+     - 终端预览新增 A4 verdict 行（confirmed✅ / conflict⚠️ / uncertain❓）
+  2. `run_streaming_batch.py`：
+     - 同样集成 A4 校验
+     - 汇总表新增 A4确认/A4冲突 两列
+     - 每个视频 JSON 含完整 A4 输出
+* **涉及/修改的文件清单**：
+  - `scripts/run_streaming_pipeline.py` (Modified — +A4 integration)
+  - `scripts/run_streaming_batch.py` (Modified — +A4 integration)
+* **执行结果与验证状态**：50/50 tests 通过；导入验证通过
+* **置信度或遗留待办（TODO）**：
+  - Step 4: GPU 单视频验证（P14T14C06）→ 确认 A4 输出格式正确
+  - Step 5: 10 视频全量重跑对比
 ---
 

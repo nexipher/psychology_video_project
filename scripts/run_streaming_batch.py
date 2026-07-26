@@ -27,6 +27,7 @@ from src.video_analysis.aggregator import DailyAggregator
 from src.video_analysis.special_behavior import SpecialBehaviorDetector
 from src.video_analysis.mllm_verifier import MLLMVerifier
 from src.video_analysis.event_dispatcher import A3EventDispatcher
+from src.video_analysis.cross_validator import CrossValidator
 from src.utils.schema_validator import get_validator
 
 
@@ -156,6 +157,13 @@ def process_video(video_path: str, verifier: MLLMVerifier, video_index: int, tot
     total_triggers = dispatcher.total_triggers
     total_mllm = dispatcher.total_mllm_calls
     mllm_results = dispatcher.flush()
+
+    # A4 交叉校验
+    trigger_history = behavior.get_trigger_history()
+    a4_validator = CrossValidator()
+    a4_validated = a4_validator.validate(mllm_results, trigger_history)
+    a4_summary = a4_validator.summarize(a4_validated)
+
     behavior.flush(ts)
     a2_summary = behavior.get_daily_summary(datetime.now().strftime("%Y-%m-%d"))
 
@@ -194,7 +202,12 @@ def process_video(video_path: str, verifier: MLLMVerifier, video_index: int, tot
             "daily_metrics": dm,
             "a2_special_behavior": a2_sb,
             "a3_mllm_verification": mllm_results,
+            "a4_cross_validation": a4_validated,
+            "final_verdict": a4_summary,
         },
+        "a4_confirmed": a4_summary["confirmed"],
+        "a4_conflict": a4_summary["conflict"],
+        "a4_uncertain": a4_summary["uncertain"],
     }
 
 
@@ -296,13 +309,14 @@ def main():
     print(f"全量跑批完成: {len(videos)} 视频, 总耗时 {t_batch:.0f}s")
     print(f"汇总: {batch_path}")
     print(f"{'='*70}")
-    print(f"{'视频':<14} {'帧数':>6} {'耗时':>6} {'fps':>6} {'active':>7} {'sed_r':>6} {'cov':>6} {'触发':>5} {'MLLM':>5}")
-    print(f"{'─'*70}")
+    print(f"{'视频':<14} {'帧数':>6} {'耗时':>6} {'fps':>6} {'active':>7} {'sed_r':>6} {'cov':>6} {'触发':>5} {'MLLM':>5} {'A4确认':>6} {'A4冲突':>6}")
+    print(f"{'─'*82}")
     for s in summary:
         dm = s["data"]["daily_metrics"]
         print(f"{s['video_name']:<14} {s['total_frames']:>6} {s['elapsed_sec']:>6.0f}s "
               f"{s['fps']:>5.0f} {dm['active_minutes']:>6.1f} {dm['sedentary_ratio']:>5.2f} "
-              f"{dm['coverage_minutes']:>5.1f} {s['total_triggers']:>5} {s['total_mllm_calls']:>5}")
+              f"{dm['coverage_minutes']:>5.1f} {s['total_triggers']:>5} {s['total_mllm_calls']:>5} "
+              f"{s.get('a4_confirmed', 0):>6} {s.get('a4_conflict', 0):>6}")
 
 
 if __name__ == "__main__":
