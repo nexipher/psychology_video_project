@@ -715,7 +715,44 @@
   - `scripts/run_streaming_batch.py` (Modified — +A4 integration)
 * **执行结果与验证状态**：50/50 tests 通过；导入验证通过
 * **置信度或遗留待办（TODO）**：
-  - Step 4: GPU 单视频验证（P14T14C06）→ 确认 A4 输出格式正确
+  - Step 4: GPU 单视频验证（P12T05C05）→ 11 confirmed / 4 conflict
   - Step 5: 10 视频全量重跑对比
+
+---
+
+### [2026-07-21] - [Plan A4.4] A4 Step 4：GPU 单视频验证 P12T05C05
+
+* **当前操作动作**：GPU 跑 P12T05C05 流式管线，验证 A4 交叉校验
+* **对应计划锚点**：plan.md A4.4 集成测试 — GPU 验证
+* **核心变更说明**：
+  1. P12T05C05（33,901 帧，22.6min）：15 次 MLLM 调用
+  2. A4 交叉校验结果：**11 confirmed / 4 conflict / 0 uncertain**，整体 `alert`
+  3. 4 个 conflict 中 3 个为 social_interaction→alone（CV 假阳性，单人视频常见）
+  4. A4 正确识别并降级 CV 假阳性，置信度从 0.9 降至 0.4
+  5. Terminal 输出各事件 A4 verdict 图标（confirmed✅ / conflict⚠️）
+* **涉及/修改的文件清单**：
+  - `results/A1A3/P12T05C05_streaming_20260726_115235.json` (Created — A4 结果)
+* **执行结果与验证状态**：端到端跑通，A4 输出正确
+* **置信度或遗留待办（TODO）**：
+  - Step 5: 10 视频全量重跑（含 A4）
+
+---
+
+### [2026-07-26] - A4 重构：嵌入 A3 + 去重 + 输出目录 A1A4 + video_tasks §4.3
+
+* **当前操作动作**：优化 A4 输出结构，切换输出目录，补充接口文档
+* **核心变更说明**：
+  1. **A4 嵌入 A3**：`a4_validation` 作为每条 A3 结果的子字段，一一对应
+  2. **去重**：`a4_validation` 只保留 A4 独有字段（verdict / confidence / detail / a2_signal / recommend_alert / alert_level），移除与 A3 重复的 event_type / trigger_ts / a3_evidence
+  3. **输出目录**：`results/A1A3` → `results/A1A4`（串行管线脚本 + batch 脚本同步更新）
+  4. **video_tasks.md §4.3**：新增 A4 交叉校验输出接口，含 JSON 示例 + 12 字段中文参数表
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/cross_validator.py` (Modified — slim output fields)
+  - `scripts/run_streaming_pipeline.py` (Modified — embed A4 + output dir)
+  - `scripts/run_streaming_batch.py` (Modified — embed A4 + output dir)
+  - `video_tasks.md` (Modified — +§4.3 A4 output interface)
+* **执行结果与验证状态**：17/17 tests 通过
+* **置信度或遗留待办（TODO）**：
+  - 全量 10 视频重跑到 results/A1A4/
 ---
 
