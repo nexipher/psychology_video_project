@@ -158,11 +158,14 @@ def process_video(video_path: str, verifier: MLLMVerifier, video_index: int, tot
     total_mllm = dispatcher.total_mllm_calls
     mllm_results = dispatcher.flush()
 
-    # A4 交叉校验
+    # A4 交叉校验 — 嵌入每条 A3 结果
     trigger_history = behavior.get_trigger_history()
     a4_validator = CrossValidator()
     a4_validated = a4_validator.validate(mllm_results, trigger_history)
     a4_summary = a4_validator.summarize(a4_validated)
+    for i, a3_item in enumerate(mllm_results):
+        if i < len(a4_validated):
+            a3_item["a4_validation"] = a4_validated[i]
 
     behavior.flush(ts)
     a2_summary = behavior.get_daily_summary(datetime.now().strftime("%Y-%m-%d"))
@@ -202,7 +205,6 @@ def process_video(video_path: str, verifier: MLLMVerifier, video_index: int, tot
             "daily_metrics": dm,
             "a2_special_behavior": a2_sb,
             "a3_mllm_verification": mllm_results,
-            "a4_cross_validation": a4_validated,
             "final_verdict": a4_summary,
         },
         "a4_confirmed": a4_summary["confirmed"],

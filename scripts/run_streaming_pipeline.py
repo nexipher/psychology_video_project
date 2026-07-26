@@ -294,12 +294,16 @@ def main():
     mllm_results = dispatcher.flush()
 
     # ═══════════════════════════════════════
-    # A4 交叉校验
+    # A4 交叉校验 — 嵌入每条 A3 结果
     # ═══════════════════════════════════════
     trigger_history = behavior.get_trigger_history()
     a4_validator = CrossValidator()
     a4_validated = a4_validator.validate(mllm_results, trigger_history)
     a4_summary = a4_validator.summarize(a4_validated)
+    # 将 A4 verdict 嵌入对应 A3 结果
+    for i, a3_item in enumerate(mllm_results):
+        if i < len(a4_validated):
+            a3_item["a4_validation"] = a4_validated[i]
 
     # 卸载模型
     estimator.unload_model()
@@ -343,7 +347,6 @@ def main():
         "daily_metrics": daily.get("daily_metrics", {}),
         "a2_special_behavior": daily.get("a2_special_behavior", {}),
         "a3_mllm_verification": mllm_results,
-        "a4_cross_validation": a4_validated,
         "final_verdict": a4_summary,
     }
 
@@ -371,22 +374,16 @@ def main():
           f"热点={a2_summary.get('daily_hotspot_action_count', 0)}  "
           f"社交={a2_summary.get('daily_avg_social_intensity', 0):.3f}")
 
-    print(f"\nA3 MLLM 复核: {len(mllm_results)} 个事件 "
+    print(f"\nA3 MLLM 复核 + A4 交叉校验: {len(mllm_results)} 个事件 "
           f"(触发{total_triggers}次, 实际调用{total_mllm_calls}次)")
     for r in mllm_results:
         status = "✅" if r.get("evidence_sufficient") else "⚠️"
-        print(f"  {status} [{r.get('event_type')}] "
-              f"t={r.get('start_sec', 0):.0f}s-{r.get('end_sec', 0):.0f}s | "
-              f"occurrences={r.get('num_of_occurrences', '?')} | "
-              f"{r.get('activity_state', '?')} | "
-              f"{r.get('repetition_type', r.get('social_context', '?'))}")
-
-    print(f"\nA4 交叉校验:")
-    for v in a4_validated:
-        verdict_icon = {"confirmed": "✅", "conflict": "⚠️", "uncertain": "❓"}.get(v["verdict"], "?")
-        print(f"  {verdict_icon} [{v['event_type']}] {v['verdict']} "
-              f"(confidence={v['confidence']:.2f}) | {v['detail'][:80]}")
-    print(f"  汇总: {a4_summary['overall_status']} | "
+        a4 = r.get("a4_validation", {})
+        v_icon = {"confirmed": "✅", "conflict": "⚠️", "uncertain": "❓"}.get(a4.get("verdict"), "  ")
+        print(f"  {status} [{r.get('event_type')}] A4={v_icon}{a4.get('verdict','?')}"
+              f" t={r.get('start_sec', 0):.0f}s | conf={a4.get('confidence', 0):.2f} | "
+              f"{a4.get('detail', '')[:60]}")
+    print(f"  A4 汇总: {a4_summary['overall_status']} | "
           f"确认{a4_summary['confirmed']}/冲突{a4_summary['conflict']}/不确定{a4_summary['uncertain']}")
 
 
