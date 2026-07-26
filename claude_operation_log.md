@@ -674,7 +674,24 @@
   - `tests/test_cross_validator.py` (Created)
 * **执行结果与验证状态**：17/17 tests passed (0.59s)
 * **置信度或遗留待办（TODO）**：
-  - Step 2: A2 暴露事件历史（`get_event_history()`），将 A2 触发上下文传入 `validate()`
+  - Step 2: A2 暴露事件历史（`get_trigger_history()`），将 A2 触发上下文传入 `validate()`
   - Step 3: 集成到流式管线，10 视频全量重跑对比
+
+---
+
+### [2026-07-21] - [Plan A4.2] A4 Step 2：A2 暴露触发事件历史
+
+* **当前操作动作**：SpecialBehaviorDetector 新增 `_trigger_history` 和 `get_trigger_history()`
+* **对应计划锚点**：plan.md A4.2 — A2 暴露事件历史供 CrossValidator 关联 A2 触发与 A3 结果
+* **核心变更说明**：
+  1. `_trigger_history` 列表：`_fire_trigger()` 中每次触发时记录 {a2_source, event_type, trigger_ts}
+  2. `get_trigger_history()`：返回触发历史的深拷贝
+  3. `reset()` 中清空 `_trigger_history`
+  4. 之前 `_fire_trigger` 只在 callback 存在时才执行（跳过历史记录），现在历史记录与回调独立——即使没有注册 A3EventDispatcher，也会记录触发事件
+* **涉及/修改的文件清单**：
+  - `src/video_analysis/special_behavior.py` (Modified — +_trigger_history, +get_trigger_history, reset)
+* **执行结果与验证状态**：50/50 A2+A4 tests 通过
+* **置信度或遗留待办（TODO）**：
+  - Step 3: 集成到流式管线，调用 `validator.validate(behavior.get_trigger_history(), a3_results)`
 ---
 

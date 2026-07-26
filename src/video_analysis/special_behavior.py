@@ -900,6 +900,9 @@ class SpecialBehaviorDetector:
         # 实时触发回调（由 A3EventDispatcher 注册）
         self._trigger_callback: Optional[callable] = None
 
+        # A2→A3 触发事件历史（供 A4 CrossValidator 使用）
+        self._trigger_history: List[Dict[str, Any]] = []
+
         # 人物离画追踪
         self._prev_has_person: bool = False
 
@@ -916,14 +919,30 @@ class SpecialBehaviorDetector:
         """
         self._trigger_callback = callback
 
+    def get_trigger_history(self) -> list[dict]:
+        """返回 A2→A3 触发事件历史（供 A4 CrossValidator 使用）。
+
+        每个事件包含 a2_source（来源检测器）、event_type（A3 事件类型）、
+        trigger_ts（触发时间戳），与 A3 MLLM 结果按时间顺序一一对应。
+        """
+        return list(self._trigger_history)
+
     # ---- 触发信号发送 ----
 
     def _fire_trigger(self, a2_key: str, trigger_ts: float) -> None:
-        """如果回调已注册，将 A2 检测结果转发为 A3 事件。"""
-        if self._trigger_callback is None:
-            return
+        """如果回调已注册，将 A2 检测结果转发为 A3 事件，同时记录触发历史。"""
         a3_type = self._A2_TO_A3.get(a2_key)
-        if a3_type:
+        if not a3_type:
+            return
+
+        # 记录 A2→A3 触发事件（供 A4 交叉校验）
+        self._trigger_history.append({
+            "a2_source": a2_key,
+            "event_type": a3_type,
+            "trigger_ts": trigger_ts,
+        })
+
+        if self._trigger_callback is not None:
             self._trigger_callback(a3_type, trigger_ts)
 
     def update(
@@ -1056,6 +1075,7 @@ class SpecialBehaviorDetector:
     def reset(self) -> None:
         self._frame_count = 0
         self._hourly_buffer.clear()
+        self._trigger_history.clear()
         for det in [self._wandering, self._repeated_action, self._inactivity, self._circadian, self._social]:
             if det is not None:
                 det.reset()
