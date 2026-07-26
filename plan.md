@@ -210,15 +210,178 @@ psychology_video_project/
 
 ### 第 6–7 天：任务 A4 — 一致性校验与拒判闭环集成
 
-**目标**：构建 CV 模型与 MLLM 的交叉校验逻辑，实现完整闭环。
+**目标**：构建 CV 模型（A2）与 MLLM（A3）的交叉校验逻辑。A2 说"有问题"，A3 看了画面确认"是不是真的有问题"——A4 根据两者是否一致，输出最终置信度和报警等级。
 
-| # | 子任务 | 产出 | 验收标准 |
-|:--|:---|:---|:---|
-| A4.1 | `cross_validator.py` | `CrossValidator` 双重一致性确认 | CV 结果 + MLLM 结果 → 一致则提升置信度，冲突则降级 |
-| A4.2 | 拒判机制 | 基于 `evidence_sufficient` 的真值过滤 | 光线不足/遮挡/证据不足 → `status: "uncertain"`，不触发强报警 |
-| A4.3 | `pipeline.py` 顶层编排 | 完整 Pipeline：视频输入 → A1特征 → A2异常检测 → A3复核 → A4校验 → 最终输出 | 端到端可运行 |
-| A4.4 | 集成测试 | 端到端测试（使用 Skeleton 数据 + Mock MLLM） | 全链路跑通，无断点 |
-| A4.5 | README 同步更新 | 填写 README.md 全部章节 | 符合 §9.1 规范 |
+---
+
+#### A4.1 `CrossValidator` 设计
+
+`CrossValidator` 接收 A2 触发事件列表和 A3 MLLM 复核结果列表，逐事件对比判断：
+
+```
+输入:
+  a2_triggers: [{event_type, reason, priority, ...}, ...]
+  a3_results:  [{event_type, activity_state, social_context, repetition_type, evidence_sufficient}, ...]
+
+输出:
+  validated: [{event_type, verdict, confidence, status, detail}, ...]
+```
+
+##### 一致性判定规则
+
+每个 A3 结果与触发它的 A2 事件对比，按 `event_type` 分场景判定：
+
+| A3 event_type | 关键字段 | A2 信号 | 一致(confirmed) | 冲突(conflict) | 不确定(uncertain) |
+|:---|:---|:---|:---|:---|:---|
+| `long_inactivity` | `activity_state` | inactivity 触发 | sedentary | active | evidence_sufficient=false |
+| `social_interaction` | `social_context` | social_intensity>0.3 | interacting / co_present | alone | evidence_sufficient=false |
+| `repetitive_behavior` | `repetition_type` | wandering / hotspot | same_route / repeated_search | none | evidence_sufficient=false |
+
+##### 置信度计算公式
+
+```
+base_confidence = a3["evidence_sufficient"] ? 0.7 : 0.3
+
+if verdict == "confirmed":
+    final_confidence = min(0.95, base_confidence + 0.2)
+elif verdict == "conflict":
+    final_confidence = max(0.2, base_confidence - 0.3)
+else:  # uncertain
+    final_confidence = 0.3
+```
+
+##### CrossValidator 输出结构
+
+```python
+{
+    "event_type": "repetitive_behavior",
+    "trigger_ts": 120.0,
+    "verdict": "confirmed",           # confirmed | conflict | uncertain
+    "confidence": 0.85,               # A4 综合置信度 (0-1)
+    "a2_signal": {
+        "source": "RepeatedActionDetector",
+        "hotspot_count": 5,
+    },
+    "a3_evidence": {
+        "observable_evidence": "老人在厨房与客厅之间来回走动3次",
+        "activity_state": "active",
+        "repetition_type": "same_route",
+    },
+    "detail": "CV+MLLM 一致确认：存在同路线重复走动行为",
+    "recommend_alert": True,          # 是否建议触发预警
+    "alert_level": "medium",          # low | medium | high
+}
+```
+
+---
+
+#### A4.2 拒判机制
+
+当以下任一条件满足时，`verdict = "uncertain"`，不触发强报警：
+
+| 拒判条件 | 来源 | 处理 |
+|:---|:---|:---|
+| `evidence_sufficient == false` | A3 MLLM 自身判断 | 画面证据不足，置信度降为 0.3 |
+| `quality_flags` 非空 | A3 MLLM 标记遮挡/光线/离画 | 补充 detail 说明画质问题 |
+| MLLM 输出为 safe_default | A3 schema 校验失败降级 | 标记为 MLLM 输出异常，延迟复核 |
+| A2 置信度 < 阈值 | A2 检测器 `confidence_score` | pre-filter：A2 置信度过低的事件不进入 A3 |
+
+报警等级规则：
+
+| verdict | evidence_sufficient | alert_level |
+|:---|:---|:---|
+| confirmed | true | `high` |
+| confirmed | false | `uncertain`（不触发） |
+| conflict | true | `low`（MLLM 优先） |
+| conflict | false | `uncertain` |
+| uncertain | — | `uncertain` |
+
+---
+
+#### A4.3 Pipeline 集成
+
+A4 作为管线最后一步，在 A3 完成后运行：
+
+```python
+# CrossValidator 是无状态的纯函数，不需要加载模型
+validator = CrossValidator()
+
+# 输入 A2 触发历史 + A3 MLLM 结果
+# A3EventDispatcher.results 中每个 MLLM 结果都对应一个 A2 事件
+validated = validator.validate(
+    a2_triggers=behavior.get_event_history(),  # 需要 A2 暴露事件历史
+    a3_results=mllm_results,
+)
+
+final_output = {
+    "user_id": video_name,
+    "date": date,
+    "daily_metrics": a1_daily,
+    "a2_special_behavior": a2_summary,
+    "a3_mllm_verification": mllm_results,
+    "a4_cross_validation": validated,       # ★ A4 输出
+    "final_verdict": validator.summarize(validated),  # 整体评估
+}
+```
+
+---
+
+#### A4.4 改造步骤
+
+| Step | 内容 | 产出 | 验收 |
+|:---|:---|:---|:---|
+| 1 | 创建 `cross_validator.py` | `CrossValidator` 类：一致性判定 + 置信度计算 + 拒判规则 | 单元测试（Mock A2/A3 数据） |
+| 2 | A2 暴露事件历史 | `SpecialBehaviorDetector.get_event_history()` 返回触发事件列表 | 33 A2 tests 通过 |
+| 3 | 集成到流式管线 | `run_streaming_pipeline.py` 末尾加 A4 校验 | 端到端跑通 |
+| 4 | 全量 10 视频重跑 | 对比 A4 有无的输出差异 | 汇总表含 A4 verdict |
+| 5 | 更新 README | A4 架构 + 输出示例 | 文档同步 |
+
+---
+
+#### A4.5 测试策略
+
+| 层级 | 内容 | 数据 |
+|:---|:---|:---|
+| 单元测试 | CrossValidator 三种 verdict 分支 + 拒判条件 | Mock A2 triggers + Mock A3 results |
+| 集成测试 | A1→A2→A3→A4 全链路 | P14T14C06 streaming |
+| 一致性验证 | 已知 CV 假阳性场景（social 单人视频）→ A4 应输出 conflict | P14T14C06 / P10T07C04 |
+
+---
+
+#### A4.6 输出示例
+
+```json
+{
+  "a4_cross_validation": [
+    {
+      "event_type": "repetitive_behavior",
+      "trigger_ts": 127.0,
+      "verdict": "confirmed",
+      "confidence": 0.85,
+      "recommend_alert": true,
+      "alert_level": "medium",
+      "detail": "CV+MLLM 一致确认：存在同路线重复走动行为"
+    },
+    {
+      "event_type": "social_interaction", 
+      "trigger_ts": 26.0,
+      "verdict": "conflict",
+      "confidence": 0.30,
+      "recommend_alert": false,
+      "alert_level": null,
+      "detail": "CV 检测到多人共现（social_intensity=0.30），但 MLLM 确认为单人独处（social_context=alone），CV 假阳性"
+    }
+  ],
+  "final_verdict": {
+    "overall_status": "caution",
+    "total_events": 9,
+    "confirmed": 5,
+    "conflict": 4,
+    "uncertain": 0,
+    "recommendation": "5/9 事件经 MLLM 确认属实，4 件为 CV 假阳性（单人视频社交误检），建议关注重复走动行为"
+  }
+}
+```
 
 ---
 
@@ -463,16 +626,16 @@ is_standing = NOT is_truly_sedentary
 | A1 全部 | 视频感知基座 + 特征提取 + 日级聚合 | 104 passed ✅ |
 | A2 全部 | 5 项专项行为检测器 + 总装 | 33 passed ✅ |
 | A3 Mock | Prompt 模板 + Verifier + Schema 校验 + 异常兜底 | 28 passed ✅ |
-| A3 GPU | Qwen2.5-VL-7B 实机验证（P14T14C06, P10T07C04 各两次） | ✅ |
-| 管线集成 | A1+A2+A3 全流程脚本 `run_a1_a3_pipeline.py` | ✅ |
-| 文档 | README.md v4.0 + plan.md + claude_operation_log.md | ✅ |
+| A3 GPU | Qwen2.5-VL-7B 实机验证（P14T14C06, P10T07C04） | ✅ |
+| A3 实时化 | A3EventDispatcher + 冷却期 + A2 回调 + 流式管线 | 18 tests + 10 视频全量跑通 ✅ |
+| 管线集成 | batch: `run_a1_a3_pipeline.py` + streaming: `run_streaming_pipeline.py` + batch: `run_streaming_batch.py` | ✅ |
+| Bug 修复 | Qwen2.5-VL import + analytical_summary + event_type 冲突 + repetition_type 约束 + libgomp + long_inactivity 误触发 | ✅ |
+| 文档 | README.md v4.0 + plan.md v6.0 + claude_operation_log.md + video_tasks.md §4 参数表 | ✅ |
 
 ### 下一步
 
-1. **A3 实时化改造**：实现冷却期机制、YOLO+Qwen 共驻显存、逐帧 A2 信号监听 → 实时触发 MLLM
-2. **同步 §6.2 Schema**：`cooling_period` / `num_of_occurrences` 字段落实到 `schema_validator.py` + `mllm_prompts.yaml` + `mllm_verifier.py`
-3. **批量 GPU 验证**：10 个视频全量跑 A1+A2+A3
-4. **A4 开发**：多模型一致性校验与拒判机制
+1. **A4 开发**：CrossValidator 双重一致性校验 + 拒判机制 + 管线集成（见 §3 A4 详细计划）
+2. **全量 10 视频重跑**：A4 集成后对比有无 A4 校验的输出差异
 
 ---
 
@@ -742,4 +905,4 @@ Pipeline 启动:
 
 ---
 
-> 📋 计划版本: v5.0 | 更新日期: 2026-07-20 | 基于: `video_tasks.md` + `agent.md`
+> 📋 计划版本: v6.0 | 更新日期: 2026-07-21 | 基于: `video_tasks.md` + `agent.md`
