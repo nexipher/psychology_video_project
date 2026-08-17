@@ -55,6 +55,34 @@ print(f'Done: {model_dir}')
 "
 ```
 
+### 数据集准备
+
+代码仓库**不包含数据集和模型权重**，需自行准备以下数据资产并放入项目 `dataset/` 目录：
+
+```
+dataset/
+├── Videos_mp4/                      # 10 个 Untrimmed RGB 测试视频（.mp4，共 ~600MB）
+│   ├── P02T01C07.mp4
+│   ├── P03T01C05.mp4
+│   ├── P03T12C01.mp4
+│   ├── P04T07C05.mp4
+│   ├── P04T15C07.mp4
+│   ├── P06T08C02.mp4
+│   ├── P07T03C05.mp4
+│   ├── P10T07C04.mp4
+│   ├── P12T05C05.mp4
+│   └── P14T14C06.mp4
+├── doubao/                          # 豆包测试视频（可选）
+└── Toyota_Smarthome/                # 完整数据集（可选，用于精度验证）
+```
+
+| 数据资产 | 来源 | 用途 |
+|:---|:---|:---|
+| `Videos_mp4/` 10 个视频 | Toyota Smarthome untrimmed RGB 子集 | 全流程测试（本项目主要输入） |
+| `Toyota_Smarthome/` 完整数据 | [官方渠道申请](https://project.inria.fr/toyotasmarthome/) | Skeleton V1.2 精度验证 / MLLM Few-Shot |
+| Qwen2.5-VL-7B-Instruct | ModelScope（见上文下载命令） | A3 事件复核 |
+| yolov8n-pose.pt | ultralytics 自动下载 | A1 姿态估计 |
+
 ### 运行流式管线（A1+A2+A3+A4）
 
 ```bash
