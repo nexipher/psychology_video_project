@@ -25,7 +25,62 @@
 
 ---
 
-## 二、系统架构
+## 二、快速开始
+
+### 环境要求
+
+- **GPU**: NVIDIA RTX 4090 (24GB VRAM)
+- **Python**: 3.12+
+- **PyTorch**: 2.5.1+cu124
+- **CUDA**: 12.4
+
+### 安装依赖
+
+```bash
+pip install ultralytics scipy opencv-python pytest transformers accelerate modelscope
+```
+
+### 下载模型
+
+YOLO 模型首次运行时自动下载。Qwen2.5-VL 需手动下载：
+
+```bash
+python3 -c "
+from modelscope import snapshot_download
+model_dir = snapshot_download(
+    'qwen/Qwen2.5-VL-7B-Instruct',
+    cache_dir='./models',
+)
+print(f'Done: {model_dir}')
+"
+```
+
+### 运行流式管线（A1+A2+A3+A4）
+
+```bash
+# 单视频（默认 P14T14C06）
+python scripts/run_streaming_pipeline.py
+
+# 指定视频
+python scripts/run_streaming_pipeline.py /path/to/video.mp4
+
+# 10 视频批量
+python scripts/run_streaming_batch.py
+```
+
+输出：`results/A1A4/{video_name}_streaming_{timestamp}.json`
+
+### 运行测试
+
+```bash
+pytest tests/                             # 全量 200 tests
+pytest tests/test_cross_validator.py      # A4 专项 17 tests
+pytest tests/test_event_dispatcher.py     # A3 冷却期 18 tests
+```
+
+---
+
+## 三、系统架构
 
 ```mermaid
 graph TD
@@ -107,7 +162,7 @@ sequenceDiagram
 
 ---
 
-## 三、当前进度
+## 四、当前进度
 
 | 阶段 | 内容 | 状态 | 测试 |
 |:---|:---|:---|:---|
@@ -124,61 +179,6 @@ sequenceDiagram
 | P14T14C06 (9.6min) | ✅ 9 MLLM 调用 | ✅ 8 确认 / 1 冲突 |
 | P12T05C05 (22.6min) | ✅ 15 MLLM 调用 | ✅ 11 确认 / 4 冲突 |
 | 其余 8 视频 | ✅ 全量跑通（Step 6 批量） | ⏳ 待 A4 重跑 |
-
----
-
-## 四、快速开始
-
-### 环境要求
-
-- **GPU**: NVIDIA RTX 4090 (24GB VRAM)
-- **Python**: 3.12+
-- **PyTorch**: 2.5.1+cu124
-- **CUDA**: 12.4
-
-### 安装依赖
-
-```bash
-pip install ultralytics scipy opencv-python pytest transformers accelerate modelscope
-```
-
-### 下载模型
-
-YOLO 模型首次运行时自动下载。Qwen2.5-VL 需手动下载：
-
-```bash
-python3 -c "
-from modelscope import snapshot_download
-model_dir = snapshot_download(
-    'qwen/Qwen2.5-VL-7B-Instruct',
-    cache_dir='./models',
-)
-print(f'Done: {model_dir}')
-"
-```
-
-### 运行流式管线（A1+A2+A3+A4）
-
-```bash
-# 单视频（默认 P14T14C06）
-python scripts/run_streaming_pipeline.py
-
-# 指定视频
-python scripts/run_streaming_pipeline.py /path/to/video.mp4
-
-# 10 视频批量
-python scripts/run_streaming_batch.py
-```
-
-输出：`results/A1A4/{video_name}_streaming_{timestamp}.json`
-
-### 运行测试
-
-```bash
-pytest tests/                             # 全量 200 tests
-pytest tests/test_cross_validator.py      # A4 专项 17 tests
-pytest tests/test_event_dispatcher.py     # A3 冷却期 18 tests
-```
 
 ---
 
