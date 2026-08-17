@@ -14,9 +14,9 @@
 | 数据集 | `dataset/Videos_mp4/` 10 个视频；Toyota Smarthome 压缩包（暂不解压） |
 | A1 | ✅ 全部完成，104 tests |
 | A2 | ✅ 全部完成，33 tests |
-| A3 | ✅ Mock 完成 + GPU 验证通过（P14T14C06, P10T07C04），28 tests |
-| A4 | ❌ 未开始 |
-| README | ✅ 已完成 v4.0 |
+| A3 | ✅ 流式化完成 — 冷却期调度 + 10 视频全量跑通（131 触发 → 119 MLLM） |
+| A4 | ✅ Steps 1-4 完成 — CrossValidator + 内嵌输出 + GPU 验证（P12T05C05） |
+| README | ✅ 已完成 v5.0 |
 | 操作日志 | ✅ 持续更新 |
 
 ---
@@ -328,13 +328,14 @@ final_output = {
 
 #### A4.4 改造步骤
 
-| Step | 内容 | 产出 | 验收 |
+| Step | 内容 | 产出 | 状态 |
 |:---|:---|:---|:---|
-| 1 | 创建 `cross_validator.py` | `CrossValidator` 类：一致性判定 + 置信度计算 + 拒判规则 | 单元测试（Mock A2/A3 数据） |
-| 2 | A2 暴露事件历史 | `SpecialBehaviorDetector.get_event_history()` 返回触发事件列表 | 33 A2 tests 通过 |
-| 3 | 集成到流式管线 | `run_streaming_pipeline.py` 末尾加 A4 校验 | 端到端跑通 |
-| 4 | 全量 10 视频重跑 | 对比 A4 有无的输出差异 | 汇总表含 A4 verdict |
-| 5 | 更新 README | A4 架构 + 输出示例 | 文档同步 |
+| 1 | 创建 `cross_validator.py` | `CrossValidator` 类：一致性判定 + 置信度计算 + 拒判规则 | ✅ 17 tests |
+| 2 | A2 暴露事件历史 | `SpecialBehaviorDetector.get_trigger_history()` 返回触发事件列表 | ✅ 50/50 tests |
+| 3 | 集成到流式管线 | `run_streaming_pipeline.py` + `run_streaming_batch.py` 加 A4 校验 | ✅ |
+| 4 | GPU 单视频验证 | P12T05C05：11 confirmed / 4 conflict / 0 uncertain | ✅ |
+| 5 | 全量 10 视频重跑 | 输出到 `results/A1A4/`，汇总表含 A4 verdict | ⏳ 待 GPU 跑批 |
+| 6 | 更新 README + video_tasks | README v5.0 + video_tasks §4.3 | ✅ |
 
 ---
 
@@ -630,12 +631,13 @@ is_standing = NOT is_truly_sedentary
 | A3 实时化 | A3EventDispatcher + 冷却期 + A2 回调 + 流式管线 | 18 tests + 10 视频全量跑通 ✅ |
 | 管线集成 | batch: `run_a1_a3_pipeline.py` + streaming: `run_streaming_pipeline.py` + batch: `run_streaming_batch.py` | ✅ |
 | Bug 修复 | Qwen2.5-VL import + analytical_summary + event_type 冲突 + repetition_type 约束 + libgomp + long_inactivity 误触发 | ✅ |
-| 文档 | README.md v4.0 + plan.md v6.0 + claude_operation_log.md + video_tasks.md §4 参数表 | ✅ |
+| 文档 | README.md v5.0 + plan.md v6.0 + claude_operation_log.md + video_tasks.md §4.1-§4.3 参数表 | ✅ |
 
 ### 下一步
 
-1. **A4 开发**：CrossValidator 双重一致性校验 + 拒判机制 + 管线集成（见 §3 A4 详细计划）
-2. **全量 10 视频重跑**：A4 集成后对比有无 A4 校验的输出差异
+1. **全量 10 视频重跑（含 A4）**：输出到 `results/A1A4/`，汇总表含 A4 verdict 列
+2. **A3 Prompt 优化**：提高 social_interaction 判定准确率，减少单人视频假阳性
+3. **A1 指标调参**：sedentary_ratio=0.00 的视频（P04T15C07, P14T14C06）排查
 
 ---
 
@@ -905,4 +907,4 @@ Pipeline 启动:
 
 ---
 
-> 📋 计划版本: v6.0 | 更新日期: 2026-07-21 | 基于: `video_tasks.md` + `agent.md`
+> 📋 计划版本: v7.0 | 更新日期: 2026-07-26 | 基于: `video_tasks.md` + `agent.md`
